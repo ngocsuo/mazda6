@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 🛠️ Bước 1: Thêm kho lưu trữ Ubuntu nếu thiếu
-export DEBIAN_FRONTEND=noninteractive
+
 echo "🔍 Kiểm tra kho lưu trữ Ubuntu..."
 REPO_LINES=(
     "deb http://archive.ubuntu.com/ubuntu jammy main restricted universe multiverse"
@@ -17,7 +17,8 @@ done
 
 # 🔄 Cập nhật hệ thống và cài đặt các gói cần thiết
 echo "⬇ Đang cập nhật hệ thống..."
-sudo apt update && sudo apt upgrade -y --only-upgrade
+sudo DEBIAN_FRONTEND=noninteractive apt update && sudo DEBIAN_FRONTEND=noninteractive apt upgrade -y --only-upgrade -o Dpkg::Options::="--force-confold"
+
 
 # 🔄 Cài đặt Cron nếu chưa có
 echo "🛠️ Kiểm tra và cài đặt Cron..."
