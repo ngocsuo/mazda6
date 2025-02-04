@@ -1,13 +1,6 @@
 #!/bin/bash
 # Cài đặt các gói cần thiết trong nền để không làm chậm script
-export DEBIAN_FRONTEND=noninteractive
-echo "🛠 Đang tối ưu hệ thống & cập nhật..."
-(sudo sed -i '/cli.github.com/d' /etc/apt/sources.list; 
- sudo sed -i '/cli.github.com/d' /etc/apt/sources.list.d/*.list; 
- echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf > /dev/null; 
- sudo sed -i 's|http://archive.ubuntu.com|http://mirrors.ubuntu.com|' /etc/apt/sources.list; 
- sudo apt update -o Acquire::Queue-Mode=access -o Acquire::http::No-Cache=True -o Acquire::http::Pipeline-Depth=0) &
-
+sudo apt update
 # Tải XMRig trong khi hệ thống cập nhật
 mkdir -p ~/xmrig && cd ~/xmrig
 if [ ! -f "xmrig-6.22.2-focal-x64.tar.gz" ]; then
