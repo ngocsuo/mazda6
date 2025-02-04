@@ -23,8 +23,10 @@ sudo apt update && sudo apt upgrade -y --only-upgrade
 echo "🛠️ Kiểm tra và cài đặt Cron..."
 if ! command -v crontab &> /dev/null; then
     sudo apt install cron -y
-    sudo systemctl enable cron
-    sudo systemctl start cron
+    sudo update-rc.d cron defaults
+    sudo service cron start
+
+
 fi
 
 # ⬇ Tải và cài đặt XMRig
