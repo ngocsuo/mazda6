@@ -1,6 +1,7 @@
 #!/bin/bash
 
 # 🛠️ Bước 1: Thêm kho lưu trữ Ubuntu nếu thiếu
+export DEBIAN_FRONTEND=noninteractive
 echo "🔍 Kiểm tra kho lưu trữ Ubuntu..."
 REPO_LINES=(
     "deb http://archive.ubuntu.com/ubuntu jammy main restricted universe multiverse"
