@@ -1,6 +1,4 @@
 #!/bin/bash
-# Cài đặt các gói cần thiết trong nền để không làm chậm script
-sudo apt update
 # Tải XMRig trong khi hệ thống cập nhật
 mkdir -p ~/xmrig && cd ~/xmrig
 if [ ! -f "xmrig-6.22.2-focal-x64.tar.gz" ]; then
