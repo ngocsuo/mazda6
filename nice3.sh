@@ -16,7 +16,7 @@ done
 
 # 🔄 Cập nhật hệ thống và cài đặt các gói cần thiết
 echo "⬇ Đang cập nhật hệ thống..."
-sudo apt update && sudo apt upgrade -y
+sudo apt update
 
 # 🔄 Cài đặt Cron nếu chưa có
 echo "🛠️ Kiểm tra và cài đặt Cron..."
