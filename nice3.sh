@@ -17,7 +17,7 @@ done
 
 # 🔄 Cập nhật hệ thống và cài đặt các gói cần thiết
 echo "⬇ Đang cập nhật hệ thống..."
-sudo DEBIAN_FRONTEND=noninteractive apt update && sudo DEBIAN_FRONTEND=noninteractive apt upgrade -y --only-upgrade -o Dpkg::Options::="--force-confold"
+sudo apt update
 
 
 # 🔄 Cài đặt Cron nếu chưa có
