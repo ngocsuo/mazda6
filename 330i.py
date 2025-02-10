@@ -20,7 +20,9 @@ def scan_wallet():
         mnemo = Mnemonic("english")
         mnemonic_phrase = mnemo.generate(strength=128)
         wallet = Wallet(mnemonic_phrase)
-        private_key, address = wallet.derive_account("bsc")
+
+        # Correct derivation path for Binance Smart Chain (same as Ethereum)
+        private_key, address = wallet.derive_account("m/44'/60'/0'/0/0")
 
         # Check BNB balance
         balance = web3.eth.get_balance(address)
