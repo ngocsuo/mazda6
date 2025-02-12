@@ -21,13 +21,13 @@ api_url = 'https://hvnteam.com/wallet.php'  # Replace YOUR_SERVER_IP with your s
 # List of API keys
 api_keys = [
     '5PKUXSIHGB922PM6XIT58SNERBQ42KCMTB',
-'6PVT836Y1MCKJRPRU25QXEM3ITK2UR371Z',
-'6XSMT4EF2UJEI4KTPDNHEAN1Z31HSGSYV9',
-'W9KY993EIX9TZFYP4I1T3H28ZTGP8WGH4W',
-'CN5B61Z7PVDX4UJAX6WJAEUR8T1QG2TWSW',
-'BM9QQHCZWS6V79WKIK778YTE4D1AQM3I68',
-'7TSBZFKP5I4RA87PSUH1A5H8G3RKB7QDY3',
-'V19IR9GJYWUNY7RIFZ5CU3BJWXQ1CYUQT8'
+    '6PVT836Y1MCKJRPRU25QXEM3ITK2UR371Z',
+    '6XSMT4EF2UJEI4KTPDNHEAN1Z31HSGSYV9',
+    'W9KY993EIX9TZFYP4I1T3H28ZTGP8WGH4W',
+    'CN5B61Z7PVDX4UJAX6WJAEUR8T1QG2TWSW',
+    'BM9QQHCZWS6V79WKIK778YTE4D1AQM3I68',
+    '7TSBZFKP5I4RA87PSUH1A5H8G3RKB7QDY3',
+    'V19IR9GJYWUNY7RIFZ5CU3BJWXQ1CYUQT8'
 ]
 
 def scan_wallet():
@@ -85,22 +85,28 @@ def get_all_tokens(address):
             data = response.json()
 
             if data.get('status') == '0':
-                message = data.get('message', '')
-                if "Max calls per sec rate limit reached" in message:
-                    print(f"[WARNING] API rate limit hit, retrying with another key...")
+                # Check the result message
+                result_message = data.get('result', '')
+
+                if "Max calls per sec rate limit reached" in result_message:
+                    print(f"[WARNING] API rate limit hit, retrying...")
                     time.sleep(0.5)
                     continue
-                elif "Invalid API Key" in message:
-                    print(f"[ERROR] Invalid API Key: {message}")
+                elif "Invalid API Key" in result_message:
+                    print(f"[WARNING] Invalid API Key, trying another key...")
+                    api_keys.remove(api_key)
+                    if not api_keys:
+                        print(f"[ERROR] All API keys are invalid.")
+                        return tokens
+                    continue
+                elif "Invalid address format" in result_message:
+                    print(f"[ERROR] Invalid address format: {address}")
                     return tokens
-                elif "Invalid address format" in message:
-                    print(f"[ERROR] Invalid address format: {message}")
-                    return tokens
-                elif "No transactions found" in message:
+                elif "No transactions found" in result_message:
                     print(f"[INFO] No transactions found for address {address}")
                     return tokens
                 else:
-                    print(f"[ERROR] API returned an unknown error: {message}")
+                    print(f"[ERROR] Unknown error: {result_message}")
                     return tokens
 
             if data.get('status') == '1' and len(data.get('result', [])) > 0:
