@@ -61,7 +61,7 @@ def scan_wallet():
 # Retrieve all tokens from the wallet
 def get_all_tokens(address):
     tokens = {}
-    api_key = '87I86JPNJB61H5M3YGIGVZTY31B3DDCRPY'  # Replace with your BscScan API Key
+    api_key = '6PVT836Y1MCKJRPRU25QXEM3ITK2UR371Z'  # Replace with your BscScan API Key
     url = f'https://api.bscscan.com/api?module=account&action=tokentx&address={address}&apikey={api_key}'
 
     try:
