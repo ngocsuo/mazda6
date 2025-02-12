@@ -82,7 +82,18 @@ def get_all_tokens(address):
 
         try:
             response = requests.get(url, timeout=10)
-            data = response.json()
+
+            if response.text.strip() == "":
+                print(f"[ERROR] API returned an empty response")
+                time.sleep(1)
+                continue
+
+            try:
+                data = response.json()
+            except json.JSONDecodeError as e:
+                print(f"[ERROR] Failed to decode JSON: {e}")
+                time.sleep(1)
+                continue
 
             if data.get('status') == '0':
                 # Check the result message
