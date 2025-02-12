@@ -68,12 +68,26 @@ def get_all_tokens(address):
         response = requests.get(url, timeout=10)
         data = response.json()
 
-        if data['status'] == '1' and len(data['result']) > 0:
+        if data.get('status') == '0':
+            # Handle API errors or invalid responses
+            message = data.get('message', 'Unknown error')
+            if "Invalid API Key" in message:
+                print(f"[ERROR] Invalid API Key: {message}")
+            elif "Invalid address format" in message:
+                print(f"[ERROR] Invalid address format: {message}")
+            elif "No transactions found" in message:
+                print(f"[INFO] No transactions found for address {address}")
+            else:
+                print(f"[ERROR] API returned an unknown error: {message}")
+            return tokens
+
+        if data.get('status') == '1' and len(data.get('result', [])) > 0:
             for tx in data['result']:
                 token_name = tx['tokenName']
                 if token_name not in tokens:
                     tokens[token_name] = 0
                 tokens[token_name] += float(tx.get('value', 0)) / (10 ** int(tx.get('tokenDecimal', 18)))
+
     except Exception as e:
         print(f"[ERROR] Error retrieving tokens: {e}")
 
