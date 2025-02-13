@@ -83,6 +83,7 @@ def get_all_tokens(address):
         try:
             response = requests.get(url, timeout=20)
             if response.text.strip():
+                print(f"[DEBUG] API response: {response.text}")
                 try:
                     data = response.json()
                 except json.JSONDecodeError as e:
