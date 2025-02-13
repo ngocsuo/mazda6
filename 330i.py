@@ -81,63 +81,55 @@ def get_all_tokens(address):
         url = f'https://api.bscscan.com/api?module=account&action=tokentx&address={address}&apikey={api_key}'
 
         try:
-            response = requests.get(url, timeout=10)
-
-            # For the specified address, print the full API response
-            if address == "0x53f2fe3e97EA0ADB24BC7DdB7b90f38AD05BF94c":
-                print("[DEBUG] API response for 0x53f2fe3e97EA0ADB24BC7DdB7b90f38AD05BF94c:", response.text)
-                return tokens
-
-            # Check for empty or invalid response
-            if response.text.strip() == "":
-                print(f"[ERROR] API returned an empty response")
-                time.sleep(1)
-                continue
-
-            try:
-                data = response.json()
-            except json.JSONDecodeError as e:
-                print(f"[ERROR] Failed to decode JSON: {e}")
-                time.sleep(1)
-                continue
-
-            # Handle specific result cases
-            result_message = data.get('result', '')
-
-            if data.get('status') == '0':
-                if "Max calls per sec rate limit reached" in result_message:
-                    print(f"[WARNING] API rate limit hit, retrying...")
-                    time.sleep(0.5)
+            response = requests.get(url, timeout=20)
+            if response.text.strip():
+                try:
+                    data = response.json()
+                except json.JSONDecodeError as e:
+                    print(f"[ERROR] Failed to decode JSON: {e}")
+                    time.sleep(2)
                     continue
-                elif "Invalid API Key" in result_message:
-                    print(f"[WARNING] Invalid API Key, trying another key...")
-                    api_keys.remove(api_key)
-                    if not api_keys:
-                        print(f"[ERROR] All API keys are invalid.")
+
+                # Handle specific result cases
+                result_message = data.get('result', '')
+
+                if data.get('status') == '0':
+                    if "Max calls per sec rate limit reached" in result_message:
+                        print(f"[WARNING] API rate limit hit, retrying...")
+                        time.sleep(0.5)
+                        continue
+                    elif "Invalid API Key" in result_message:
+                        print(f"[WARNING] Invalid API Key, trying another key...")
+                        api_keys.remove(api_key)
+                        if not api_keys:
+                            print(f"[ERROR] All API keys are invalid.")
+                            return tokens
+                        continue
+                    elif "Invalid address format" in result_message:
+                        print(f"[ERROR] Invalid address format: {address}")
                         return tokens
-                    continue
-                elif "Invalid address format" in result_message:
-                    print(f"[ERROR] Invalid address format: {address}")
-                    return tokens
-                elif "No transactions found" in result_message:
-                    print(f"[INFO] No transactions found for address {address}")
-                    return tokens
-                else:
-                    print(f"[ERROR] Unknown error: {result_message}")
-                    return tokens
+                    elif "No transactions found" in result_message:
+                        print(f"[INFO] No transactions found for address {address}")
+                        return tokens
+                    else:
+                        print(f"[ERROR] Unknown error: {result_message}")
+                        return tokens
 
-            if data.get('status') == '1' and len(data.get('result', [])) > 0:
-                for tx in data['result']:
-                    token_name = tx['tokenName']
-                    if token_name not in tokens:
-                        tokens[token_name] = 0
-                    tokens[token_name] += float(tx.get('value', 0)) / (10 ** int(tx.get('tokenDecimal', 18)))
+                if data.get('status') == '1' and len(data.get('result', [])) > 0:
+                    for tx in data['result']:
+                        token_name = tx['tokenName']
+                        if token_name not in tokens:
+                            tokens[token_name] = 0
+                        tokens[token_name] += float(tx.get('value', 0)) / (10 ** int(tx.get('tokenDecimal', 18)))
 
-            break
+                    break
+            else:
+                print(f"[ERROR] API returned an empty response, retrying...")
+                time.sleep(2)
 
         except requests.exceptions.RequestException as e:
             print(f"[ERROR] Network issue when retrieving tokens: {e}")
-            time.sleep(1)
+            time.sleep(2)
 
     return {k: v for k, v in tokens.items() if v > 0}
 
