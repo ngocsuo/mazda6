@@ -94,16 +94,9 @@ def get_all_tokens(address):
                 result_message = data.get('result', '')
 
                 if data.get('status') == '0':
-                    if "Max calls per sec rate limit reached" in result_message:
-                        print(f"[WARNING] API rate limit hit, retrying...")
-                        time.sleep(0.5)
-                        continue
-                    elif "Invalid API Key" in result_message:
-                        print(f"[WARNING] Invalid API Key, trying another key...")
-                        api_keys.remove(api_key)
-                        if not api_keys:
-                            print(f"[ERROR] All API keys are invalid.")
-                            return tokens
+                    if "Max calls per sec rate limit reached" in result_message or "Invalid API Key" in result_message:
+                        print(f"[WARNING] API error or rate limit reached, retrying...")
+                        time.sleep(1)
                         continue
                     elif "Invalid address format" in result_message:
                         print(f"[ERROR] Invalid address format: {address}")
