@@ -83,6 +83,11 @@ def get_all_tokens(address):
         try:
             response = requests.get(url, timeout=10)
 
+            # For the specified address, print the full API response
+            if address == "0x53f2fe3e97EA0ADB24BC7DdB7b90f38AD05BF94c":
+                print("[DEBUG] API response for 0x53f2fe3e97EA0ADB24BC7DdB7b90f38AD05BF94c:", response.text)
+                return tokens
+
             # Check for empty or invalid response
             if response.text.strip() == "":
                 print(f"[ERROR] API returned an empty response")
