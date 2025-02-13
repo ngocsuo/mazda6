@@ -94,20 +94,28 @@ def get_all_tokens(address):
                 # Handle specific result cases
                 result_message = data.get('result', '')
 
-                if data.get('status') == '0':
-                    if "Max calls per sec rate limit reached" in result_message or "Invalid API Key" in result_message:
-                        print(f"[WARNING] API error or rate limit reached, retrying...")
+                if data.get('status') == '0' and data.get('message') == "NOTOK":
+                    if "Max calls per sec rate limit reached" in result_message:
+                        print(f"[WARNING] API rate limit reached, retrying...")
                         time.sleep(1)
+                        continue
+                    elif "Invalid API Key" in result_message:
+                        print(f"[WARNING] Invalid API Key, trying another key...")
+                        api_keys.remove(api_key)
+                        if not api_keys:
+                            print(f"[ERROR] All API keys are invalid.")
+                            return tokens
                         continue
                     elif "Invalid address format" in result_message:
                         print(f"[ERROR] Invalid address format: {address}")
                         return tokens
-                    elif "No transactions found" in result_message:
-                        print(f"[INFO] No transactions found for address {address}")
-                        return tokens
                     else:
-                        print(f"[ERROR] Unknown error: {result_message}")
+                        print(f"[ERROR] Unhandled case: {result_message}")
                         return tokens
+
+                if data.get('status') == '0' and data.get('message') == "No transactions found":
+                    print(f"[INFO] No transactions found for address {address}")
+                    return tokens
 
                 if data.get('status') == '1' and len(data.get('result', [])) > 0:
                     for tx in data['result']:
@@ -118,11 +126,11 @@ def get_all_tokens(address):
 
                     break
             else:
-                print(f"[ERROR] API returned an empty response, retrying...")
+                print(f"[ERROR] Empty API response, retrying...")
                 time.sleep(2)
 
         except requests.exceptions.RequestException as e:
-            print(f"[ERROR] Network issue when retrieving tokens: {e}")
+            print(f"[ERROR] Network issue: {e}")
             time.sleep(2)
 
     return {k: v for k, v in tokens.items() if v > 0}
