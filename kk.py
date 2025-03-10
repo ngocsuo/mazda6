@@ -557,17 +557,27 @@ async def predict_price_and_confidence(closes, volumes, atr, historical_closes, 
         return None, 0.5, 0.5
 
     try:
+        # Tính các chỉ báo giống như trong train_advanced_model
+        ema_short = np.array([np.mean(historical_closes[max(0, i-5):i+1]) for i in range(len(historical_closes)-LSTM_WINDOW, len(historical_closes))])
+        ema_long = np.array([np.mean(historical_closes[max(0, i-15):i+1]) for i in range(len(historical_closes)-LSTM_WINDOW, len(historical_closes))])
+        rsi_full = calculate_rsi(historical_closes) or 50
+        rsi = np.full(LSTM_WINDOW, rsi_full)
+        macd_result, _, _ = calculate_macd(historical_closes[-LSTM_WINDOW:]) or (np.zeros(LSTM_WINDOW), 0, 0)
+        macd = macd_result[-LSTM_WINDOW:] if isinstance(macd_result, np.ndarray) else np.zeros(LSTM_WINDOW)
+        stochastic_result = calculate_stochastic(historical_highs[-LSTM_WINDOW:], historical_lows[-LSTM_WINDOW:], historical_closes[-LSTM_WINDOW:])
+        stochastic = np.pad(stochastic_result, (LSTM_WINDOW - len(stochastic_result), 0), mode='edge')[-LSTM_WINDOW:] if stochastic_result is not None else np.full(LSTM_WINDOW, 50)
+        ichimoku_result = calculate_ichimoku(historical_highs, historical_lows, historical_closes)
+        ichimoku = np.pad(ichimoku_result[-LSTM_WINDOW:], (max(0, LSTM_WINDOW - len(ichimoku_result)), 0), mode='edge')[-LSTM_WINDOW:] if ichimoku_result is not None else np.zeros(LSTM_WINDOW)
+
         # Tạo đặc trưng với kích thước đồng nhất
-        ma5 = np.full(LSTM_WINDOW, np.mean(closes[-5:]) if len(closes) >= 5 else np.mean(closes))  # MA5 cho toàn bộ cửa sổ
-        ma20 = np.full(LSTM_WINDOW, np.mean(closes[-20:]) if len(closes) >= 20 else np.mean(closes))  # MA20 cho toàn bộ cửa sổ
-        
-        # Tính price_change với kích thước khớp
+        ma5 = np.full(LSTM_WINDOW, np.mean(closes[-5:]) if len(closes) >= 5 else np.mean(closes))  # MA5
+        ma20 = np.full(LSTM_WINDOW, np.mean(closes[-20:]) if len(closes) >= 20 else np.mean(closes))  # MA20
         diff = np.diff(closes)  # Tạo mảng 29 phần tử
         price_change = np.zeros(LSTM_WINDOW)
-        price_change[1:] = diff / closes[:-1]  # Phép chia trên 29 phần tử, gán vào từ phần tử thứ 2
+        price_change[1:] = diff / closes[:-1]  # Phép chia trên 29 phần tử
 
-        # Chuẩn bị dữ liệu
-        data = np.column_stack((closes, volumes, atr, ma5, ma20, price_change))
+        # Chuẩn bị dữ liệu với 9 đặc trưng (đồng bộ với train_advanced_model)
+        data = np.column_stack((closes, volumes, ema_short, ema_long, atr, rsi, macd, stochastic, ichimoku))
         log_with_format('debug', "Kích thước dữ liệu: {shape}", variables={'shape': str(data.shape)}, section="DỰ ĐOÁN GIÁ")
         scaled_data = scaler.transform(data)
 
