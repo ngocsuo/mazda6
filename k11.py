@@ -418,7 +418,7 @@ async def get_historical_data():
     log_with_format('debug', "Lấy dữ liệu lịch sử cho {symbol}", variables={'symbol': SYMBOL}, section="NET")
     for attempt in range(3):
         try:
-            ohlcv = exchange.fetch_ohlcv(SYMBOL, timeframe='1m', limit=2000)
+            ohlcv = await exchange.fetch_ohlcv(SYMBOL, timeframe='1m', limit=2000)
             if len(ohlcv) < LSTM_WINDOW + 10:
                 log_with_format('warning', "Dữ liệu không đủ (lần {attempt}/3): {current} mẫu",
                                variables={'attempt': str(attempt + 1), 'current': str(len(ohlcv))})
@@ -455,7 +455,7 @@ async def get_price():
     log_with_format('info', "Đang lấy giá hiện tại của {symbol}", variables={'symbol': SYMBOL}, section="NET")
     for attempt in range(5):
         try:
-            ticker = exchange.fetch_ticker(SYMBOL)
+            ticker = await exchange.fetch_ticker(SYMBOL)
             log_with_format('debug', "Dữ liệu ticker: {ticker}", variables={'ticker': str(ticker)}, section="NET")
             bid = ticker.get('bid')
             ask = ticker.get('ask')
@@ -516,7 +516,7 @@ async def get_historical_data_multi_timeframe(timeframe, limit):
                    variables={'timeframe': timeframe, 'limit': str(limit)}, section="NET")
     for attempt in range(3):
         try:
-            ohlcv = exchange.fetch_ohlcv(SYMBOL, timeframe=timeframe, limit=limit)
+            ohlcv = await exchange.fetch_ohlcv(SYMBOL, timeframe=timeframe, limit=limit)
             if len(ohlcv) < limit:
                 log_with_format('warning', "Dữ liệu {timeframe} không đủ (lần {attempt}/3): {current}/{limit}",
                                variables={'timeframe': timeframe, 'attempt': str(attempt + 1), 'current': str(len(ohlcv)), 'limit': str(limit)}, section="NET")
@@ -668,7 +668,7 @@ async def place_order_with_tp_sl(side, price, quantity, volatility, predicted_pr
             return None
         
         # Đặt lệnh thị trường
-        order = exchange.create_order(symbol=SYMBOL, type='market', side=side, amount=quantity, params={'positionSide': 'BOTH'})
+        order = await exchange.create_order(symbol=SYMBOL, type='market', side=side, amount=quantity, params={'positionSide': 'BOTH'})
         entry_price = float(order['price']) if order.get('price') else price
         log_with_format('info', "Thành công: {side} tại {price}", 
                         variables={'side': side.upper(), 'price': f"{entry_price:.4f}"}, section="MINER")
@@ -690,13 +690,13 @@ async def place_order_with_tp_sl(side, price, quantity, volatility, predicted_pr
             sl_side = 'buy'
 
         # Đặt lệnh Take Profit
-        tp_order = exchange.create_order(
+        tp_order = await exchange.create_order(
             symbol=SYMBOL, type='TAKE_PROFIT_MARKET', side=tp_side, amount=quantity,
             params={'stopPrice': take_profit_price, 'positionSide': 'BOTH', 'reduceOnly': True}
         )
         
         # Đặt lệnh Stop Loss
-        sl_order = exchange.create_order(
+        sl_order = await exchange.create_order(
             symbol=SYMBOL, type='STOP_MARKET', side=sl_side, amount=quantity,
             params={'stopPrice': stop_loss_price, 'positionSide': 'BOTH', 'reduceOnly': True}
         )
@@ -737,7 +737,7 @@ async def close_position(side, quantity, close_price, close_reason):
     log_with_format('info', "📉 ĐÓNG VỊ THẾ {side} | Giá={price} | Lý do={reason}",
                    variables={'side': side.upper(), 'price': f"{close_price:.4f}", 'reason': close_reason}, section="MINER")
     try:
-        order = exchange.create_order(symbol=SYMBOL, type='market', side=side, amount=quantity, params={'positionSide': 'BOTH'})
+        order = await exchange.create_order(symbol=SYMBOL, type='market', side=side, amount=quantity, params={'positionSide': 'BOTH'})
         gross_profit = (close_price - position['entry_price']) * quantity * LEVERAGE / position['entry_price'] if position['side'].lower() == 'buy' else (position['entry_price'] - close_price) * quantity * LEVERAGE / position['entry_price']
         fee = abs(gross_profit) * TRADING_FEE_PERCENT
         net_profit = gross_profit - fee
@@ -752,7 +752,7 @@ async def check_position_status(current_price):
     log_with_format('debug', "Kiểm tra trạng thái vị thế: Giá={price}", variables={'price': f"{current_price:.4f}"}, section="MINER")
     if position:
         try:
-            positions_on_exchange = exchange.fetch_positions([SYMBOL])
+            positions_on_exchange = await exchange.fetch_positions([SYMBOL])
             current_position = next((p for p in positions_on_exchange if p['symbol'] == SYMBOL), None)
             if current_position and float(current_position['info']['positionAmt']) == 0:
                 profit = float(current_position['unrealizedProfit']) if current_position else 0
