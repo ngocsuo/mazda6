@@ -845,7 +845,7 @@ async def optimized_trading_bot():
     log_with_format('info', "Symbol: {symbol} | Leverage: {leverage}x",
                    variables={'symbol': SYMBOL, 'leverage': str(LEVERAGE)}, section="NET")
 
-    # [Phần khởi tạo mô hình, scaler, database giữ nguyên như code gốc]
+    # [Phần khởi tạo giữ nguyên như log của bạn]
     model_file = 'lstm_model.keras'
     scaler_file = 'scaler.pkl'
     rf_file = 'rf_classifier.pkl'
@@ -883,6 +883,56 @@ async def optimized_trading_bot():
         log_with_format('error', "Không thể lấy dữ liệu lịch sử, thoát", section="NET")
         return
     closes, volumes, atr, (historical_closes, historical_volumes, historical_highs, historical_lows, ohlcv) = historical_data
+
+    init_db()
+    if not os.path.exists(model_file):
+        await train_advanced_model(ohlcv, historical_closes, historical_highs, historical_lows, initial=True)
+    else:
+        await train_advanced_model(ohlcv, historical_closes, historical_highs, historical_lows, initial=False)
+
+    try:
+        exchange.set_leverage(LEVERAGE, SYMBOL)
+        log_with_format('info', "Đã đặt đòn bẩy {leverage}x", variables={'leverage': str(LEVERAGE)}, section="NET")
+    except Exception as e:
+        log_with_format('error', "Lỗi đặt đòn bẩy: {error}", variables={'error': str(e)}, section="NET")
+        return
+
+    last_price = await get_price()
+    if not last_price:
+        log_with_format('error', "Không thể lấy giá ban đầu sau nhiều lần thử, thoát", section="NET")
+        return
+
+    while True:
+        current_time = time.time()
+        current_price = await get_price()
+        if not current_price:
+            log_with_format('warning', "Không lấy được giá hợp lệ, chờ 15s để thử lại", section="NET")
+            await asyncio.sleep(15)
+            continue
+
+        # Sửa cú pháp lấy số dư
+        try:
+            balance_info = await exchange.fetch_balance(params={'type': 'future'})  # Đúng cú pháp CCXT
+            available_balance = float(balance_info['info']['availableBalance'])
+            log_with_format('debug', "Số dư khả dụng: {balance} USDT | Profit=Profit | Trades={trades}/{max_trades}",
+                            variables={'balance': f"{available_balance:.2f}", 'trades': str(daily_trades), 'max_trades': str(MAX_DAILY_TRADES)}, 
+                            profit=performance['profit'], section="CPU")
+        except Exception as e:
+            log_with_format('warning', "Lỗi lấy số dư: {error}, dùng giá trị mặc định 0", variables={'error': str(e)}, section="CPU")
+            available_balance = 0
+
+        if performance['profit'] < -DAILY_LOSS_LIMIT or daily_trades >= MAX_DAILY_TRADES or performance['consecutive_losses'] >= 3:
+            log_with_format('warning', "DỪNG BOT: Profit=Profit | Trades={trades} | Losses liên tiếp={losses}",
+                           variables={'trades': str(daily_trades), 'losses': str(performance['consecutive_losses'])}, profit=performance['profit'], section="CPU")
+            break
+
+        # [Phần còn lại của vòng lặp giữ nguyên như code trước]
+        historical_data = await get_historical_data()
+        if historical_data is None:
+            log_with_format('warning', "Không lấy được dữ liệu, chờ 10s", section="NET")
+            await asyncio.sleep(10)
+            continue
+        closes, volumes, atr, (historical_closes, historical_volumes, historical_highs, historical_lows, ohlcv) = historical_data
 
     init_db()
     if not os.path.exists(model_file):
