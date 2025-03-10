@@ -556,40 +556,28 @@ async def predict_price_and_confidence(closes, volumes, atr, historical_closes, 
         return None, 0.5, 0.5
 
     try:
-        log_with_format('debug', "Chuẩn bị dữ liệu cho dự đoán", section="DỰ ĐOÁN GIÁ")
-        ema_short = np.array([np.mean(historical_closes[max(0, i-5):i+1]) for i in range(len(historical_closes)-LSTM_WINDOW, len(historical_closes))])
-        ema_long = np.array([np.mean(historical_closes[max(0, i-15):i+1]) for i in range(len(historical_closes)-LSTM_WINDOW, len(historical_closes))])
-        
-        log_with_format('debug', "Tính RSI với {samples} mẫu lịch sử", variables={'samples': str(len(historical_closes))}, section="DỰ ĐOÁN GIÁ")
-        rsi_full = calculate_rsi(historical_closes) or 50
-        rsi = np.full(LSTM_WINDOW, rsi_full)
-        
-        macd_result, _, _ = calculate_macd(historical_closes[-LSTM_WINDOW:]) or (np.zeros(LSTM_WINDOW), 0, 0)
-        macd = macd_result[-LSTM_WINDOW:] if isinstance(macd_result, np.ndarray) else np.zeros(LSTM_WINDOW)
-        stochastic_result = calculate_stochastic(historical_highs[-LSTM_WINDOW:], historical_lows[-LSTM_WINDOW:], historical_closes[-LSTM_WINDOW:])
-        stochastic = np.pad(stochastic_result, (LSTM_WINDOW - len(stochastic_result), 0), mode='edge')[-LSTM_WINDOW:] if stochastic_result is not None else np.full(LSTM_WINDOW, 50)
-        log_with_format('debug', "Tính Ichimoku với {samples} mẫu lịch sử", variables={'samples': str(len(historical_closes))}, section="DỰ ĐOÁN GIÁ")
-        ichimoku_result = calculate_ichimoku(historical_highs, historical_lows, historical_closes)
-        ichimoku = np.pad(ichimoku_result[-LSTM_WINDOW:], (max(0, LSTM_WINDOW - len(ichimoku_result)), 0), mode='edge')[-LSTM_WINDOW:] if ichimoku_result is not None else np.zeros(LSTM_WINDOW)
+        # Tạo đặc trưng như r.py
+        data = np.column_stack((closes, volumes, atr))
+        data['MA5'] = np.mean(closes[-5:]) if len(closes) >= 5 else np.mean(closes)
+        data['MA20'] = np.mean(closes[-20:]) if len(closes) >= 20 else np.mean(closes)
+        data['Price_Change'] = np.diff(closes, prepend=closes[0]) / closes[:-1]
+        scaled_data = scaler.transform(data)
 
-        log_with_format('debug', "Chuẩn bị dữ liệu đầu vào: {window} mẫu, 9 đặc trưng", variables={'window': str(LSTM_WINDOW)}, section="DỰ ĐOÁN GIÁ")
-        data = np.column_stack((closes, volumes, ema_short, ema_long, atr, rsi, macd, stochastic, ichimoku))
-        data_scaled = scaler.transform(data)
-        log_with_format('debug', "Dữ liệu đầu vào LSTM: {data}", variables={'data': str(data_scaled.flatten()[:10])}, section="DỰ ĐOÁN GIÁ")
-        X = data_scaled.reshape((1, LSTM_WINDOW, 9))
+        # Chuẩn bị dữ liệu cho Random Forest
+        X = scaled_data[:, :-1]
+        y = scaled_data[:, -1]  # Dự đoán Close
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-        log_with_format('debug', "Dự đoán giá bằng mô hình LSTM", section="DỰ ĐOÁN GIÁ")
-        predicted_scaled = lstm_model.predict(X, verbose=0)[0][0]
-        predicted_scaled = max(0, min(1, predicted_scaled))
-        dummy_scaled = np.zeros((1, 9))
-        dummy_scaled[0, 0] = predicted_scaled
-        predicted_price = scaler.inverse_transform(dummy_scaled)[0, 0]
-        log_with_format('debug', "Giá dự đoán (scaled): {scaled}", variables={'scaled': f"{predicted_scaled:.4f}"}, section="DỰ ĐOÁN GIÁ")
+        # Huấn luyện Random Forest
+        rf_model = RandomForestRegressor(n_estimators=100, random_state=42)
+        rf_model.fit(X_train, y_train)
+        predicted_scaled = rf_model.predict(X_test[-1].reshape(1, -1))[0]
+        predicted_price = scaler.inverse_transform([[predicted_scaled]])[0][0]
 
         current_price = closes[-1]
         predicted_change = predicted_price - current_price
         error = abs(predicted_change) / current_price
-        log_with_format('info', "DỰ ĐOÁN GIÁ: Giá hiện tại={current} | Giá dự đoán={predicted} | Thay đổi={change} ({percent}%) | Sai số={error}",
+        log_with_format('info', "DỰ ĐOÁN GIÁ (Random Forest): Giá hiện tại={current} | Giá dự đoán={predicted} | Thay đổi={change} ({percent}%) | Sai số={error}",
                        variables={'current': f"{current_price:.4f}", 'predicted': f"{predicted_price:.4f}", 
                                   'change': f"{predicted_change:.4f}", 'percent': f"{predicted_change/current_price*100:.2f}", 'error': f"{error:.4f}"}, section="DỰ ĐOÁN GIÁ")
 
@@ -598,7 +586,7 @@ async def predict_price_and_confidence(closes, volumes, atr, historical_closes, 
                            variables={'error': f"{error:.4f}", 'threshold': f"{MAX_PREDICTION_ERROR}"}, section="DỰ ĐOÁN GIÁ")
             return None, 0.5, 0.5
 
-        log_with_format('debug', "Tính độ tin cậy bằng RandomForest", section="ĐỘ TIN CẬY")
+        # Sử dụng rf_classifier cho độ tin cậy (giữ nguyên)
         confidence_buy = 0.5
         confidence_sell = 0.5
         if rf_classifier is not None and hasattr(rf_classifier, 'estimators_'):
