@@ -17,7 +17,7 @@ from sklearn.ensemble import RandomForestClassifier
 from strategies import TrendFollowing, Scalping, MeanReversion
 from colorama import init, Fore, Style
 from sklearn.model_selection import train_test_split
-import RandomForestRegressor
+from sklearn.ensemble import RandomForestRegressor
 
 # Khởi tạo colorama
 init()
@@ -501,10 +501,12 @@ async def get_price():
 async def get_balance():
     log_with_format('debug', "Lấy số dư tài khoản", section="CPU")
     try:
-        balance = exchange.fetch_balance()
-        usdt_balance = float(balance['total']['USDT'])
-        log_with_format('debug', "Số dư USDT: {balance}", variables={'balance': f"{usdt_balance:.2f}"}, section="CPU")
-        return usdt_balance
+        balance_info = exchange.fetch_balance({'type': 'future'})
+        available_balance = float(balance_info['info']['availableBalance'])
+        total_balance = float(balance_info['total']['USDT'])
+        log_with_format('debug', "Số dư Futures: Total={total} USDT | Available={available} USDT",
+                        variables={'total': f"{total_balance:.2f}", 'available': f"{available_balance:.2f}"}, section="CPU")
+        return available_balance
     except Exception as e:
         log_with_format('error', "Lỗi lấy số dư: {error}", variables={'error': str(e)}, section="CPU")
         return 0
@@ -646,13 +648,33 @@ async def place_order_with_tp_sl(side, price, quantity, volatility, predicted_pr
     log_with_format('info', "📈 ĐẶT LỆNH {side} | Giá={price} | Số lượng={quantity}",
                    variables={'side': side.upper(), 'price': f"{price:.4f}", 'quantity': f"{quantity:.2f}"}, section="MINER")
     try:
+        # Kiểm tra số dư khả dụng trước khi đặt lệnh
+        balance_info = exchange.fetch_balance({'type': 'future'})
+        available_balance = float(balance_info['info']['availableBalance'])
+        log_with_format('debug', "Số dư khả dụng: {balance} USDT", 
+                        variables={'balance': f"{available_balance:.2f}"}, section="MINER")
+        
+        # Tính yêu cầu ký quỹ ban đầu
+        notional_value = price * quantity
+        initial_margin = notional_value / LEVERAGE + notional_value * TRADING_FEE_PERCENT
+        if available_balance < initial_margin:
+            log_with_format('warning', "Không đủ ký quỹ: Cần {required} USDT, chỉ có {available} USDT",
+                            variables={'required': f"{initial_margin:.2f}", 'available': f"{available_balance:.2f}"}, section="MINER")
+            return None
+
+        # Kiểm tra xem đã có vị thế mở hay chưa
         if position is not None:
             log_with_format('warning', "Đã có vị thế mở, không thể đặt lệnh mới", section="MINER")
             return None
+        
+        # Đặt lệnh thị trường
         order = exchange.create_order(symbol=SYMBOL, type='market', side=side, amount=quantity, params={'positionSide': 'BOTH'})
         entry_price = float(order['price']) if order.get('price') else price
-        log_with_format('info', "Thành công: {side} tại {price}", variables={'side': side.upper(), 'price': f"{entry_price:.4f}"}, section="MINER")
+        log_with_format('info', "Thành công: {side} tại {price}", 
+                        variables={'side': side.upper(), 'price': f"{entry_price:.4f}"}, section="MINER")
         last_pnl_check_time = time.time()
+
+        # Tính toán Take Profit và Stop Loss dựa trên ATR
         atr_multiplier = atr[-1] / entry_price if atr[-1] != 0 else 0
         take_profit_percent = TAKE_PROFIT_PERCENT * (1 + atr_multiplier)
         stop_loss_percent = STOP_LOSS_PERCENT * (1 + atr_multiplier)
@@ -666,17 +688,24 @@ async def place_order_with_tp_sl(side, price, quantity, volatility, predicted_pr
             stop_loss_price = entry_price * (1 + stop_loss_percent)
             tp_side = 'buy'
             sl_side = 'buy'
+
+        # Đặt lệnh Take Profit
         tp_order = exchange.create_order(
             symbol=SYMBOL, type='TAKE_PROFIT_MARKET', side=tp_side, amount=quantity,
             params={'stopPrice': take_profit_price, 'positionSide': 'BOTH', 'reduceOnly': True}
         )
+        
+        # Đặt lệnh Stop Loss
         sl_order = exchange.create_order(
             symbol=SYMBOL, type='STOP_MARKET', side=sl_side, amount=quantity,
             params={'stopPrice': stop_loss_price, 'positionSide': 'BOTH', 'reduceOnly': True}
         )
+        
         log_with_format('info', "Đã đặt TP={tp} | SL={sl}",
-                       variables={'tp': f"{take_profit_price:.4f}", 'sl': f"{stop_loss_price:.4f}"}, section="MINER")
+                        variables={'tp': f"{take_profit_price:.4f}", 'sl': f"{stop_loss_price:.4f}"}, section="MINER")
         await bot.send_message(chat_id=CHAT_ID, text=f"📈 {side.upper()} {quantity} {SYMBOL} tại {entry_price:.4f}, TP={take_profit_price:.4f}, SL={stop_loss_price:.4f}")
+        
+        # Cập nhật thông tin vị thế
         position = {
             'side': side, 'entry_price': entry_price, 'quantity': quantity,
             'tp_order_id': tp_order['id'], 'sl_order_id': sl_order['id'],
@@ -816,6 +845,7 @@ async def optimized_trading_bot():
     log_with_format('info', "Symbol: {symbol} | Leverage: {leverage}x",
                    variables={'symbol': SYMBOL, 'leverage': str(LEVERAGE)}, section="NET")
 
+    # [Phần khởi tạo mô hình, scaler, database giữ nguyên như code gốc]
     model_file = 'lstm_model.keras'
     scaler_file = 'scaler.pkl'
     rf_file = 'rf_classifier.pkl'
@@ -880,9 +910,13 @@ async def optimized_trading_bot():
             await asyncio.sleep(15)
             continue
 
-        balance = await get_balance()
-        log_with_format('debug', "Trạng thái tài khoản: Balance={balance} USDT | Profit=Profit | Trades={trades}/{max_trades}",
-                       variables={'balance': f"{balance:.2f}", 'trades': str(daily_trades), 'max_trades': str(MAX_DAILY_TRADES)}, profit=performance['profit'], section="CPU")
+        # Lấy số dư khả dụng từ ví Futures
+        balance_info = await exchange.fetch_balance({'type': 'future'})
+        available_balance = float(balance_info['info']['availableBalance'])
+        log_with_format('debug', "Số dư khả dụng: {balance} USDT | Profit=Profit | Trades={trades}/{max_trades}",
+                        variables={'balance': f"{available_balance:.2f}", 'trades': str(daily_trades), 'max_trades': str(MAX_DAILY_TRADES)}, 
+                        profit=performance['profit'], section="CPU")
+        
         if performance['profit'] < -DAILY_LOSS_LIMIT or daily_trades >= MAX_DAILY_TRADES or performance['consecutive_losses'] >= 3:
             log_with_format('warning', "DỪNG BOT: Profit=Profit | Trades={trades} | Losses liên tiếp={losses}",
                            variables={'trades': str(daily_trades), 'losses': str(performance['consecutive_losses'])}, profit=performance['profit'], section="CPU")
@@ -960,13 +994,6 @@ async def optimized_trading_bot():
                 'signal_line': signal_line,
                 'volatility': volatility
             }
-            if strategy.name == 'Scalping':
-                if ema_short < ema_long and volatility < 0.001 and 50 <= rsi <= 60 and trend == 'down':
-                    sell_score += dynamic_weight * 1.5
-                    active_strategies.append(strategy.name)
-                elif ema_short > ema_long and volatility > 0.0005 and rsi < 50:
-                    buy_score += dynamic_weight * 1.5
-                    active_strategies.append(strategy.name)
             if strategy.evaluate_buy(**kwargs):
                 buy_score += dynamic_weight
                 active_strategies.append(strategy.name)
@@ -992,11 +1019,16 @@ async def optimized_trading_bot():
         log_with_format('info', "CHIẾN LƯỢC: Buy Score={buy} | Sell Score={sell} | Active={active}",
                        variables={'buy': f"{buy_score:.2f}", 'sell': f"{sell_score:.2f}", 'active': ', '.join(active_strategies)}, section="CHIẾN LƯỢC")
 
+        # Tính quantity dựa trên số dư khả dụng
+        notional_value_max = available_balance * LEVERAGE  # Giá trị vị thế tối đa
+        max_quantity = notional_value_max / current_price  # Số lượng tối đa có thể giao dịch
         reward_to_risk = TAKE_PROFIT_PERCENT / STOP_LOSS_PERCENT
         kelly = kelly_criterion(performance['win_rate'], reward_to_risk)
-        quantity = BASE_AMOUNT * kelly
-        log_with_format('debug', "Kelly Criterion: Win Rate={win_rate} | R:R={rr} | Quantity={quantity}",
-                       variables={'win_rate': f"{performance['win_rate']:.2f}", 'rr': f"{reward_to_risk:.2f}", 'quantity': f"{quantity:.4f}"}, section="CPU")
+        base_quantity = BASE_AMOUNT * kelly
+        quantity = min(base_quantity, max_quantity)  # Chọn số lượng nhỏ hơn
+        
+        log_with_format('debug', "Quantity tính toán: Base={base}, Max={max}, Final={quantity}",
+                        variables={'base': f"{base_quantity:.4f}", 'max': f"{max_quantity:.4f}", 'quantity': f"{quantity:.4f}"}, section="CPU")
 
         if position is None and not is_trading:
             timestamp = current_time
@@ -1034,6 +1066,7 @@ async def optimized_trading_bot():
 
         last_price = current_price
         await asyncio.sleep(2)
+
 
 if __name__ == "__main__":
     try:
