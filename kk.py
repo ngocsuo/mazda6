@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 from sklearn.ensemble import RandomForestClassifier
 from strategies import TrendFollowing, Scalping, MeanReversion
 from colorama import init, Fore, Style
+from sklearn.model_selection import train_test_split
 
 # Khởi tạo colorama
 init()
@@ -556,23 +557,25 @@ async def predict_price_and_confidence(closes, volumes, atr, historical_closes, 
         return None, 0.5, 0.5
 
     try:
-        # Tạo đặc trưng như r.py
-        data = np.column_stack((closes, volumes, atr))
-        data['MA5'] = np.mean(closes[-5:]) if len(closes) >= 5 else np.mean(closes)
-        data['MA20'] = np.mean(closes[-20:]) if len(closes) >= 20 else np.mean(closes)
-        data['Price_Change'] = np.diff(closes, prepend=closes[0]) / closes[:-1]
+        # Tạo đặc trưng với kích thước đồng nhất
+        ma5 = np.full(LSTM_WINDOW, np.mean(closes[-5:]) if len(closes) >= 5 else np.mean(closes))  # MA5 cho toàn bộ cửa sổ
+        ma20 = np.full(LSTM_WINDOW, np.mean(closes[-20:]) if len(closes) >= 20 else np.mean(closes))  # MA20 cho toàn bộ cửa sổ
+        price_change = np.zeros(LSTM_WINDOW)
+        price_change[1:] = np.diff(closes, prepend=closes[0]) / closes[:-1]  # Tỷ lệ thay đổi cho toàn bộ cửa sổ
+
+        # Chuẩn bị dữ liệu
+        data = np.column_stack((closes, volumes, atr, ma5, ma20, price_change))
         scaled_data = scaler.transform(data)
 
         # Chuẩn bị dữ liệu cho Random Forest
-        X = scaled_data[:, :-1]
-        y = scaled_data[:, -1]  # Dự đoán Close
+        X = scaled_data  # Sử dụng toàn bộ cửa sổ
+        y = closes  # Mục tiêu là giá đóng cửa
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
         # Huấn luyện Random Forest
         rf_model = RandomForestRegressor(n_estimators=100, random_state=42)
         rf_model.fit(X_train, y_train)
-        predicted_scaled = rf_model.predict(X_test[-1].reshape(1, -1))[0]
-        predicted_price = scaler.inverse_transform([[predicted_scaled]])[0][0]
+        predicted_price = rf_model.predict(X_test[-1].reshape(1, -1))[0]
 
         current_price = closes[-1]
         predicted_change = predicted_price - current_price
