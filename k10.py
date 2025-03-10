@@ -1,4 +1,4 @@
-import ccxt.async_support as ccxt
+import ccxt.async_support as ccxt 
 import time
 import numpy as np
 from sklearn.preprocessing import MinMaxScaler
@@ -837,15 +837,29 @@ def kelly_criterion(win_rate, reward_to_risk):
                    variables={'win_rate': f"{win_rate:.2%}", 'rr': f"{reward_to_risk:.2f}", 'kelly': f"{kelly:.2f}"}, section="CPU")
     return kelly
 
-# --- Bot chính ---
+
+# Giả sử các hàm khác đã được định nghĩa: get_historical_data, get_price, predict_price_and_confidence, v.v.
+
 async def optimized_trading_bot():
     global lstm_model, rf_classifier, is_trading, position, data_buffer, last_retrain_time, last_check_time, last_pnl_check_time, scaler
+    global performance, daily_trades, strategy_performance  # Biến toàn cục thường dùng trong bot của bạn
+
+    # Khởi tạo các biến toàn cục nếu chưa có
+    is_trading = False
+    position = None
+    data_buffer = []
+    last_retrain_time = time.time()
+    last_check_time = time.time()
+    last_pnl_check_time = time.time()
+    performance = {'profit': 0.0, 'win_rate': 0.5, 'consecutive_losses': 0}
+    daily_trades = 0
+    strategy_performance = {strat.name: {'wins': 0, 'losses': 0} for strat in STRATEGIES}
 
     log_with_format('info', "=== KHỞI ĐỘNG BOT TRADING ===", section="NET")
     log_with_format('info', "Symbol: {symbol} | Leverage: {leverage}x",
                    variables={'symbol': SYMBOL, 'leverage': str(LEVERAGE)}, section="NET")
 
-    # [Phần khởi tạo giữ nguyên]
+    # Tải hoặc tạo mô hình
     model_file = 'lstm_model.keras'
     scaler_file = 'scaler.pkl'
     rf_file = 'rf_classifier.pkl'
@@ -878,6 +892,7 @@ async def optimized_trading_bot():
     else:
         rf_classifier = create_rf_classifier()
 
+    # Lấy dữ liệu ban đầu
     historical_data = await get_historical_data()
     if historical_data is None or len(historical_data) != 4:
         log_with_format('error', "Không thể lấy dữ liệu lịch sử, thoát", section="NET")
@@ -910,7 +925,7 @@ async def optimized_trading_bot():
             await asyncio.sleep(15)
             continue
 
-        # Lấy số dư với CCXT bất đồng bộ
+        # Lấy số dư khả dụng từ ví Futures
         try:
             balance_info = await exchange.fetch_balance(params={'type': 'future'})
             available_balance = float(balance_info['info']['availableBalance'])
@@ -933,17 +948,17 @@ async def optimized_trading_bot():
             continue
         closes, volumes, atr, (historical_closes, historical_volumes, historical_highs, historical_lows, ohlcv) = historical_data
 
-        # [Phần còn lại của vòng lặp giữ nguyên]
         data_buffer.extend(ohlcv)
         if len(data_buffer) > BUFFER_SIZE:
             data_buffer = data_buffer[-BUFFER_SIZE:]
 
-        current_time = time.time()
+        # Huấn luyện lại mô hình nếu cần
         if current_time - last_retrain_time >= RETRAIN_INTERVAL and len(data_buffer) >= LSTM_WINDOW + 10:
             log_with_format('info', "--- HUẤN LUYỆN LẠI MÔ HÌNH ---", section="CPU")
             await train_advanced_model(ohlcv, historical_closes, historical_highs, historical_lows, initial=False)
             last_retrain_time = current_time
 
+        # Tính các chỉ báo kỹ thuật
         ema_short = np.mean(closes[-5:])
         ema_long = np.mean(closes[-15:])
         volatility = np.std(closes[-10:]) / np.mean(closes[-10:]) if np.mean(closes[-10:]) != 0 else 0
@@ -955,6 +970,7 @@ async def optimized_trading_bot():
         log_with_format('info', "CHỈ BÁO: EMA Short={short} | EMA Long={long} | Volatility={vol} | RSI={rsi} | ADX={adx}",
                        variables={'short': f"{ema_short:.4f}", 'long': f"{ema_long:.4f}", 'vol': f"{volatility:.4f}", 'rsi': f"{rsi:.2f}", 'adx': f"{adx:.2f}"}, section="CHỈ BÁO")
 
+        # Dự đoán giá
         prediction_result = await predict_price_and_confidence(
             closes, volumes, atr, historical_closes, historical_highs, historical_lows, buy_score=0, sell_score=0
         )
@@ -968,11 +984,13 @@ async def optimized_trading_bot():
             predicted_price, confidence_buy, confidence_sell = prediction_result
             predicted_change = predicted_price - current_price if predicted_price else 0
 
+        # Xác định xu hướng và trạng thái thị trường
         trend = await get_trend_confirmation()
         market_state = 'trending' if adx > 25 else 'sideways' if adx < 20 else 'breakout' if volume_spike else 'normal'
         log_with_format('info', "THỊ TRƯỜNG: State={state} | Trend={trend} | Volume Spike={spike}",
                        variables={'state': market_state, 'trend': trend, 'spike': str(volume_spike)}, section="THỊ TRƯỜNG")
 
+        # Tính điểm mua/bán
         buy_score = 0
         sell_score = 0
         active_strategies = []
@@ -1009,6 +1027,7 @@ async def optimized_trading_bot():
         buy_score += (confidence_buy * 50) if confidence_buy else 0
         sell_score += (confidence_sell * 50) if confidence_sell else 0
 
+        # Tín hiệu đa khung thời gian
         historical_closes_5m = await get_historical_data_multi_timeframe('5m', 20)
         historical_closes_15m = await get_historical_data_multi_timeframe('15m', 20)
         if historical_closes_5m is not None and historical_closes_15m is not None:
@@ -1024,24 +1043,21 @@ async def optimized_trading_bot():
         log_with_format('info', "CHIẾN LƯỢC: Buy Score={buy} | Sell Score={sell} | Active={active}",
                        variables={'buy': f"{buy_score:.2f}", 'sell': f"{sell_score:.2f}", 'active': ', '.join(active_strategies)}, section="CHIẾN LƯỢC")
 
-        # Tính quantity dựa trên số dư khả dụng
-        notional_value_max = available_balance * LEVERAGE  # Giá trị vị thế tối đa
-        max_quantity = notional_value_max / current_price  # Số lượng tối đa có thể giao dịch
+        # Tính quantity dựa trên số dư
+        notional_value_max = available_balance * LEVERAGE
+        max_quantity = notional_value_max / current_price if current_price != 0 else 0
         reward_to_risk = TAKE_PROFIT_PERCENT / STOP_LOSS_PERCENT
         kelly = kelly_criterion(performance['win_rate'], reward_to_risk)
         base_quantity = BASE_AMOUNT * kelly
-        quantity = min(base_quantity, max_quantity)  # Chọn số lượng nhỏ hơn
-        
+        quantity = min(base_quantity, max_quantity)
         log_with_format('debug', "Quantity tính toán: Base={base}, Max={max}, Final={quantity}",
                         variables={'base': f"{base_quantity:.4f}", 'max': f"{max_quantity:.4f}", 'quantity': f"{quantity:.4f}"}, section="CPU")
 
+        # Đặt lệnh
         if position is None and not is_trading:
             timestamp = current_time
             confirmed = await confirm_trade_signal(buy_score, sell_score, predicted_change, trend, ema_short, ema_long, macd, signal_line, rsi, adx)
             error = abs(predicted_change) / current_price if predicted_change else 0
-            log_with_format('debug', "Kiểm tra điều kiện: Buy={buy}, Sell={sell}, Confirmed={conf}, Trend={trend}, Error={error}, Conf Buy={conf_buy}, Conf Sell={conf_sell}",
-                           variables={'buy': str(buy_score), 'sell': str(sell_score), 'conf': str(confirmed), 'trend': trend, 'error': f"{error:.4f}", 
-                                      'conf_buy': str(confidence_buy), 'conf_sell': str(confidence_sell)}, section="MINER")
             if (buy_score >= BUY_THRESHOLD and confidence_buy >= MIN_CONFIDENCE and confirmed and
                 error <= MAX_PREDICTION_ERROR and trend in ['up', 'breakout', 'down']):
                 log_with_format('info', "📈 TÍN HIỆU MUA: Score={score} | Confidence={conf} | Quantity={quantity}",
@@ -1052,6 +1068,7 @@ async def optimized_trading_bot():
                     await save_prediction(timestamp, 'buy', predicted_price, current_price, quantity, buy_score=buy_score, sell_score=sell_score)
                     for strat in active_strategies:
                         strategy_performance[strat]['wins' if order['price'] else 'losses'] += 1
+                    daily_trades += 1
                 is_trading = False
             elif (sell_score >= SELL_THRESHOLD and confidence_sell >= MIN_CONFIDENCE and confirmed and
                   error <= MAX_PREDICTION_ERROR and trend in ['down', 'breakout']):
@@ -1063,15 +1080,16 @@ async def optimized_trading_bot():
                     await save_prediction(timestamp, 'sell', predicted_price, current_price, quantity, buy_score=buy_score, sell_score=sell_score)
                     for strat in active_strategies:
                         strategy_performance[strat]['wins' if order['price'] else 'losses'] += 1
+                    daily_trades += 1
                 is_trading = False
 
+        # Kiểm tra vị thế
         if current_time - last_check_time >= CHECK_INTERVAL and position:
             await check_position_status(current_price)
             last_check_time = current_time
 
         last_price = current_price
         await asyncio.sleep(2)
-
 
 if __name__ == "__main__":
     try:
