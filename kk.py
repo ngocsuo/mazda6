@@ -593,7 +593,7 @@ async def predict_price_and_confidence(closes, volumes, atr, historical_closes, 
                            variables={'error': f"{error:.4f}", 'threshold': f"{MAX_PREDICTION_ERROR}"}, section="DỰ ĐOÁN GIÁ")
             return None, 0.5, 0.5
 
-        # Sử dụng rf_classifier cho độ tin cậy (giữ nguyên)
+        # Sử dụng rf_classifier cho độ tin cậy
         confidence_buy = 0.5
         confidence_sell = 0.5
         if rf_classifier is not None and hasattr(rf_classifier, 'estimators_'):
