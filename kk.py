@@ -560,11 +560,15 @@ async def predict_price_and_confidence(closes, volumes, atr, historical_closes, 
         # Tạo đặc trưng với kích thước đồng nhất
         ma5 = np.full(LSTM_WINDOW, np.mean(closes[-5:]) if len(closes) >= 5 else np.mean(closes))  # MA5 cho toàn bộ cửa sổ
         ma20 = np.full(LSTM_WINDOW, np.mean(closes[-20:]) if len(closes) >= 20 else np.mean(closes))  # MA20 cho toàn bộ cửa sổ
+        
+        # Tính price_change với kích thước khớp
+        diff = np.diff(closes)  # Tạo mảng 29 phần tử
         price_change = np.zeros(LSTM_WINDOW)
-        price_change[1:] = np.diff(closes, prepend=closes[0]) / closes[:-1]  # Tỷ lệ thay đổi cho toàn bộ cửa sổ
+        price_change[1:] = diff / closes[:-1]  # Phép chia trên 29 phần tử, gán vào từ phần tử thứ 2
 
         # Chuẩn bị dữ liệu
         data = np.column_stack((closes, volumes, atr, ma5, ma20, price_change))
+        log_with_format('debug', "Kích thước dữ liệu: {shape}", variables={'shape': str(data.shape)}, section="DỰ ĐOÁN GIÁ")
         scaled_data = scaler.transform(data)
 
         # Chuẩn bị dữ liệu cho Random Forest
@@ -611,7 +615,7 @@ async def predict_price_and_confidence(closes, volumes, atr, historical_closes, 
     except Exception as e:
         log_with_format('error', "Lỗi trong quá trình dự đoán: {error}", variables={'error': str(e)}, section="DỰ ĐOÁN GIÁ")
         return None, 0.5, 0.5
-
+    
 # --- Hàm xác nhận tín hiệu ---
 async def confirm_trade_signal(buy_score, sell_score, predicted_change, trend, ema_short, ema_long, macd, signal_line, rsi, adx):
     log_with_format('debug', "Xác nhận tín hiệu giao dịch", section="MINER")
