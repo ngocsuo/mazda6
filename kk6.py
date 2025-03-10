@@ -17,6 +17,7 @@ from sklearn.ensemble import RandomForestClassifier
 from strategies import TrendFollowing, Scalping, MeanReversion
 from colorama import init, Fore, Style
 from sklearn.model_selection import train_test_split
+import RandomForestRegressor
 
 # Khởi tạo colorama
 init()
