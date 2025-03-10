@@ -501,7 +501,7 @@ async def get_price():
 async def get_balance():
     log_with_format('debug', "Lấy số dư tài khoản", section="CPU")
     try:
-        balance_info = exchange.fetch_balance({'type': 'future'})
+        balance_info = await exchange.fetch_balance({'type': 'future'})
         available_balance = float(balance_info['info']['availableBalance'])
         total_balance = float(balance_info['total']['USDT'])
         log_with_format('debug', "Số dư Futures: Total={total} USDT | Available={available} USDT",
@@ -649,7 +649,7 @@ async def place_order_with_tp_sl(side, price, quantity, volatility, predicted_pr
                    variables={'side': side.upper(), 'price': f"{price:.4f}", 'quantity': f"{quantity:.2f}"}, section="MINER")
     try:
         # Kiểm tra số dư khả dụng trước khi đặt lệnh
-        balance_info = exchange.fetch_balance({'type': 'future'})
+        balance_info = await exchange.fetch_balance({'type': 'future'})
         available_balance = float(balance_info['info']['availableBalance'])
         log_with_format('debug', "Số dư khả dụng: {balance} USDT", 
                         variables={'balance': f"{available_balance:.2f}"}, section="MINER")
