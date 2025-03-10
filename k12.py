@@ -147,6 +147,7 @@ MAX_PREDICTION_ERROR = 0.05
 BUY_THRESHOLD = 60    # Giảm từ 70
 SELL_THRESHOLD = 30
 MIN_CONFIDENCE = 0.5
+USE_PERCENTAGE = 0.6
 
 # Biến toàn cục
 scaler = MinMaxScaler()
@@ -1044,14 +1045,15 @@ async def optimized_trading_bot():
                        variables={'buy': f"{buy_score:.2f}", 'sell': f"{sell_score:.2f}", 'active': ', '.join(active_strategies)}, section="CHIẾN LƯỢC")
 
         # Tính quantity dựa trên số dư
-        notional_value_max = available_balance * LEVERAGE
+        usable_balance = available_balance * USE_PERCENTAGE  # Chỉ dùng 50% số dư
+        notional_value_max = usable_balance * LEVERAGE
         max_quantity = notional_value_max / current_price if current_price != 0 else 0
         reward_to_risk = TAKE_PROFIT_PERCENT / STOP_LOSS_PERCENT
         kelly = kelly_criterion(performance['win_rate'], reward_to_risk)
         base_quantity = BASE_AMOUNT * kelly
         quantity = min(base_quantity, max_quantity)
-        log_with_format('debug', "Quantity tính toán: Base={base}, Max={max}, Final={quantity}",
-                        variables={'base': f"{base_quantity:.4f}", 'max': f"{max_quantity:.4f}", 'quantity': f"{quantity:.4f}"}, section="CPU")
+        log_with_format('debug', "Quantity tính toán: Base={base}, Max={max}, Final={quantity}, Usable Balance={usable}",
+                        variables={'base': f"{base_quantity:.4f}", 'max': f"{max_quantity:.4f}", 'quantity': f"{quantity:.4f}", 'usable': f"{usable_balance:.2f}"}, section="CPU")
 
         # Đặt lệnh
         if position is None and not is_trading:
