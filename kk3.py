@@ -569,32 +569,26 @@ async def predict_price_and_confidence(closes, volumes, atr, historical_closes, 
         ichimoku_result = calculate_ichimoku(historical_highs, historical_lows, historical_closes)
         ichimoku = np.pad(ichimoku_result[-LSTM_WINDOW:], (max(0, LSTM_WINDOW - len(ichimoku_result)), 0), mode='edge')[-LSTM_WINDOW:] if ichimoku_result is not None else np.zeros(LSTM_WINDOW)
 
-        # Tạo đặc trưng với kích thước đồng nhất
-        ma5 = np.full(LSTM_WINDOW, np.mean(closes[-5:]) if len(closes) >= 5 else np.mean(closes))  # MA5
-        ma20 = np.full(LSTM_WINDOW, np.mean(closes[-20:]) if len(closes) >= 20 else np.mean(closes))  # MA20
-        diff = np.diff(closes)  # Tạo mảng 29 phần tử
-        price_change = np.zeros(LSTM_WINDOW)
-        price_change[1:] = diff / closes[:-1]  # Phép chia trên 29 phần tử
-
         # Chuẩn bị dữ liệu với 9 đặc trưng (đồng bộ với train_advanced_model)
         data = np.column_stack((closes, volumes, ema_short, ema_long, atr, rsi, macd, stochastic, ichimoku))
         log_with_format('debug', "Kích thước dữ liệu: {shape}", variables={'shape': str(data.shape)}, section="DỰ ĐOÁN GIÁ")
         scaled_data = scaler.transform(data)
 
-        # Chuẩn bị dữ liệu cho Random Forest
+        # Chuẩn bị dữ liệu cho Random Forest Regressor
         X = scaled_data  # Sử dụng toàn bộ cửa sổ
-        y = closes  # Mục tiêu là giá đóng cửa
+        y = closes  # Mục tiêu là giá đóng cửa (giá trị liên tục)
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-        # Huấn luyện Random Forest
-        rf_model = RandomForestClassifier(n_estimators=100, random_state=42)
-        rf_model.fit(X_train, y_train)
-        predicted_price = rf_model.predict(X_test[-1].reshape(1, -1))[0]
+        # Huấn luyện Random Forest Regressor
+        rf_regressor = RandomForestRegressor(n_estimators=100, random_state=42)
+        log_with_format('debug', "Đã khởi tạo RandomForestRegressor", section="DỰ ĐOÁN GIÁ")
+        rf_regressor.fit(X_train, y_train)
+        predicted_price = rf_regressor.predict(X_test[-1].reshape(1, -1))[0]
 
         current_price = closes[-1]
         predicted_change = predicted_price - current_price
         error = abs(predicted_change) / current_price
-        log_with_format('info', "DỰ ĐOÁN GIÁ (Random Forest): Giá hiện tại={current} | Giá dự đoán={predicted} | Thay đổi={change} ({percent}%) | Sai số={error}",
+        log_with_format('info', "DỰ ĐOÁN GIÁ (Random Forest Regressor): Giá hiện tại={current} | Giá dự đoán={predicted} | Thay đổi={change} ({percent}%) | Sai số={error}",
                        variables={'current': f"{current_price:.4f}", 'predicted': f"{predicted_price:.4f}", 
                                   'change': f"{predicted_change:.4f}", 'percent': f"{predicted_change/current_price*100:.2f}", 'error': f"{error:.4f}"}, section="DỰ ĐOÁN GIÁ")
 
@@ -603,7 +597,7 @@ async def predict_price_and_confidence(closes, volumes, atr, historical_closes, 
                            variables={'error': f"{error:.4f}", 'threshold': f"{MAX_PREDICTION_ERROR}"}, section="DỰ ĐOÁN GIÁ")
             return None, 0.5, 0.5
 
-        # Sử dụng rf_classifier cho độ tin cậy
+        # Sử dụng rf_classifier (Random Forest Classifier) cho độ tin cậy
         confidence_buy = 0.5
         confidence_sell = 0.5
         if rf_classifier is not None and hasattr(rf_classifier, 'estimators_'):
