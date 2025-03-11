@@ -165,13 +165,13 @@ async def watch_position_and_price():
     global position, current_price
     while True:
         try:
-            # Theo dõi giá qua WebSocket
-            ticker = await exchange.watch_ticker(SYMBOL)
+            # Lấy giá bằng fetch_ticker thay vì watch_ticker
+            ticker = await exchange.fetch_ticker(SYMBOL)
             current_price = float(ticker['last'])
-            log_with_format('debug', "Giá hiện tại từ WebSocket: {price}", 
+            log_with_format('debug', "Giá hiện tại từ polling: {price}", 
                            variables={'price': f"{current_price:.2f}"}, section="NET")
 
-            # Đồng bộ và kiểm tra vị thế
+            # Kiểm tra và đồng bộ vị thế
             if position:
                 positions = await exchange.fetch_positions([SYMBOL])
                 current_position = next((p for p in positions if p['symbol'] == SYMBOL), None)
@@ -189,11 +189,13 @@ async def watch_position_and_price():
                     position['quantity'] = float(current_position['info']['positionAmt'])
                     await update_trailing_stop(current_price, atr=None)  # ATR sẽ được tính trong hàm nếu cần
                     await check_and_close_position(current_price)
-            await asyncio.sleep(0.1)  # Tăng tần suất kiểm tra
+
+            await asyncio.sleep(1)  # Kiểm tra mỗi 1 giây để tránh vượt giới hạn API
         except Exception as e:
-            log_with_format('error', "Lỗi WebSocket vị thế/giá: {error}", 
+            log_with_format('error', "Lỗi polling vị thế/giá: {error}", 
                            variables={'error': str(e)}, section="NET")
-            await asyncio.sleep(5)
+            await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Lỗi polling: {str(e)}")
+            await asyncio.sleep(5)  # Đợi lâu hơn nếu lỗi để tránh spam API
 
 # --- Hàm khởi tạo mô hình ---
 def create_lstm_model():
@@ -1295,11 +1297,12 @@ async def optimized_trading_bot():
     # Vòng lặp chính
     while True:
         current_time = time.time()
-
+        
+        asyncio.create_task(watch_position_and_price())
         # Chờ giá từ WebSocket
         if not current_price:
-            log_with_format('warning', "Chưa có giá từ WebSocket, chờ 5s", section="NET")
-            await asyncio.sleep(5)
+            log_with_format('warning', "Chưa có giá từ polling, chờ 2s", section="NET")
+            await asyncio.sleep(2)
             continue
 
         # Kiểm tra số dư
