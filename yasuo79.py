@@ -163,12 +163,26 @@ strategy_performance = {strat.name: {'wins': 0, 'losses': 0} for strat in STRATE
 
 async def watch_position_and_price():
     global position, current_price
+    last_logged_price = None  # Giá cuối cùng được ghi log
+    price_change_threshold = 0.5  # Ngưỡng thay đổi giá (USDT) để ghi log
+    log_interval = 60  # Ghi log giá mỗi 60 giây nếu không thay đổi
+
+    last_log_time = time.time()  # Thời gian log cuối cùng
+
     while True:
         try:
             ticker = await exchange.fetch_ticker(SYMBOL)
             current_price = float(ticker['last'])
-            log_with_format('debug', "Giá hiện tại từ polling: {price}", 
-                           variables={'price': f"{current_price:.2f}"}, section="NET")
+
+            # Chỉ ghi log giá nếu thay đổi đáng kể hoặc sau một khoảng thời gian
+            current_time = time.time()
+            if last_logged_price is None or \
+               abs(current_price - last_logged_price) >= price_change_threshold or \
+               (current_time - last_log_time >= log_interval):
+                log_with_format('debug', "Giá hiện tại từ polling: {price}", 
+                               variables={'price': f"{current_price:.2f}"}, section="NET")
+                last_logged_price = current_price
+                last_log_time = current_time
 
             if position:
                 positions = await exchange.fetch_positions([SYMBOL])
@@ -186,15 +200,15 @@ async def watch_position_and_price():
                 else:
                     position['entry_price'] = float(current_position['entryPrice'])
                     position['quantity'] = float(current_position['info']['positionAmt'])
-                    await update_trailing_stop(current_price, atr=None)
-                    await check_and_close_position(current_price)
+                    await update_trailing_stop(current_price, atr=None)  # Giữ nếu bạn cần trailing stop
+                    await check_and_close_position(current_price)  # Kiểm tra PNL vị thế
 
             await asyncio.sleep(1)
         except Exception as e:
             log_with_format('error', "Lỗi polling vị thế/giá: {error}", 
                            variables={'error': str(e)}, section="NET")
             await asyncio.sleep(5)
-            
+
 # --- Hàm khởi tạo mô hình ---
 def create_lstm_model():
     log_with_format('debug', "Khởi tạo mô hình LSTM mới")
@@ -774,34 +788,20 @@ async def check_and_close_position(current_price):
     entry_price = position['entry_price']
     quantity = position['quantity']
     side = position['side']
-    sl_price = position['sl_price']
-    tp_price = position['tp_price']
 
-    # Kiểm tra giá trong bot (bảo vệ bổ sung)
-    should_close = False
-    reason = None
-    if side == 'buy':
-        if current_price <= sl_price:
-            should_close = True
-            reason = "Stop Loss Triggered (Bot Check)"
-        elif current_price >= tp_price:
-            should_close = True
-            reason = "Take Profit Triggered (Bot Check)"
-    elif side == 'sell':
-        if current_price >= sl_price:
-            should_close = True
-            reason = "Stop Loss Triggered (Bot Check)"
-        elif current_price <= tp_price:
-            should_close = True
-            reason = "Take Profit Triggered (Bot Check)"
+    # Tính PNL của vị thế hiện tại
+    unrealized_pnl = (current_price - entry_price) * quantity \
+                     if side == 'buy' else \
+                     (entry_price - current_price) * quantity
 
-    if should_close:
-        log_with_format('warning', "Bot phát hiện {reason}: Giá={price}, SL={sl}, TP={tp}", 
-                       variables={'reason': reason, 'price': f"{current_price:.2f}", 'sl': f"{sl_price:.2f}", 
-                                  'tp': f"{tp_price:.2f}"}, section="MINER")
-        await close_position('sell' if side == 'buy' else 'buy', quantity, current_price, reason)
-
-        
+    # Kiểm tra PNL của vị thế
+    if unrealized_pnl < -DAILY_LOSS_LIMIT:
+        log_with_format('warning', "PNL vị thế {side} vượt giới hạn: {pnl}, đóng vị thế", 
+                       variables={'side': side.upper(), 'pnl': f"{unrealized_pnl:.2f}"}, section="MINER")
+        await close_position('sell' if side == 'buy' else 'buy', quantity, current_price, "PNL Threshold Exceeded")
+    else:
+        log_with_format('debug', "PNL vị thế {side}: {pnl}", 
+                       variables={'side': side.upper(), 'pnl': f"{unrealized_pnl:.2f}"}, section="MINER")
 
 
 async def close_position(side, quantity, close_price, close_reason):
