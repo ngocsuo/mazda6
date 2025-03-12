@@ -1054,17 +1054,22 @@ async def close_position(side, quantity, close_price, close_reason):
         await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Lỗi đóng vị thế: {str(e)}")
    
 #
-#
 async def test_order_placement():
     global exchange, current_price, position
     log_with_format('info', "=== BẮT ĐẦU KIỂM TRA ĐẶT VỊ THẾ VÀ TP/SL ===", section="MINER")
     MIN_NOTIONAL_VALUE = 20.0  # Giá trị tối thiểu theo quy định Binance Futures
-    TEST_QUANTITY = 0.01  # Số lượng nhỏ để test (0.01 ETH)
     wait_time = 5  # Thời gian chờ giữa các bước
     max_retries = 3
     monitoring_time = 120  # Thời gian theo dõi tối đa (2 phút)
 
     try:
+        # Lấy thông tin symbol từ API Binance
+        markets = await exchange.fetch_markets()
+        symbol_info = next(m for m in markets if m['symbol'] == SYMBOL)
+        quantity_precision = symbol_info['precision']['amount']  # Độ chính xác của quantity
+        log_with_format('debug', "Thông tin symbol: Quantity Precision={prec}", 
+                        variables={'prec': str(quantity_precision)}, section="MINER")
+
         # Lấy giá hiện tại
         current_price = await get_price()
         if current_price is None:
@@ -1072,13 +1077,23 @@ async def test_order_placement():
             await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Test thất bại: Không lấy được giá hiện tại")
             return False
 
-        # Tính số lượng test dựa trên giá trị tối thiểu
+        # Tính TEST_QUANTITY đảm bảo notional >= 20
+        TEST_QUANTITY = max(0.01, MIN_NOTIONAL_VALUE / current_price)  # Đảm bảo tối thiểu 0.01 ETH
+        TEST_QUANTITY = round(TEST_QUANTITY, quantity_precision)  # Làm tròn theo precision
         notional_value = TEST_QUANTITY * current_price
         if notional_value < MIN_NOTIONAL_VALUE:
-            TEST_QUANTITY = MIN_NOTIONAL_VALUE / current_price
+            TEST_QUANTITY = round(MIN_NOTIONAL_VALUE / current_price, quantity_precision)  # Điều chỉnh lại
+            notional_value = TEST_QUANTITY * current_price
+
         log_with_format('info', "Thông số test: Giá={price}, Số lượng={qty}, Giá trị={notional}",
-                        variables={'price': f"{current_price:.2f}", 'qty': f"{TEST_QUANTITY:.4f}", 
-                                   'notional': f"{TEST_QUANTITY * current_price:.2f}"}, section="MINER")
+                        variables={'price': f"{current_price:.2f}", 'qty': f"{TEST_QUANTITY:.{quantity_precision}f}", 
+                                   'notional': f"{notional_value:.2f}"}, section="MINER")
+
+        if notional_value < MIN_NOTIONAL_VALUE:
+            log_with_format('error', "Không thể tạo TEST_QUANTITY hợp lệ: Notional={notional} < 20", 
+                            variables={'notional': f"{notional_value:.2f}"}, section="MINER")
+            await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Test thất bại: Giá trị danh nghĩa {notional_value:.2f} < 20")
+            return False
 
         # Mở vị thế test với lệnh BUY
         log_with_format('info', "Đặt vị thế BUY để test", section="MINER")
@@ -1158,7 +1173,6 @@ async def test_order_placement():
             current_position = next((p for p in positions if p['symbol'] == SYMBOL), None)
 
             if not current_position or float(current_position['info']['positionAmt']) == 0:
-                # Vị thế đã đóng, kiểm tra xem do TP hay SL
                 if 'tp_order_id' in position:
                     tp_order = await exchange.fetch_order(position['tp_order_id'], SYMBOL)
                     if tp_order['status'] in ['closed', 'filled']:
@@ -1175,18 +1189,18 @@ async def test_order_placement():
                         break
                 break
 
-            await asyncio.sleep(5)  # Kiểm tra mỗi 5 giây
+            await asyncio.sleep(5)
 
         # Đánh giá kết quả
         if tp_triggered:
             log_with_format('info', "Kiểm tra thành công: TP đã kích hoạt đúng", section="MINER")
             await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Test thành công: TP kích hoạt tại {current_price:.2f}")
-            position = None  # Reset position vì đã đóng
+            position = None
             return True
         elif sl_triggered:
             log_with_format('info', "Kiểm tra thành công: SL đã kích hoạt đúng", section="MINER")
             await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Test thành công: SL kích hoạt tại {current_price:.2f}")
-            position = None  # Reset position vì đã đóng
+            position = None
             return True
         else:
             log_with_format('warning', "TP/SL không kích hoạt trong thời gian theo dõi, đóng vị thế thủ công", section="MINER")
@@ -1204,7 +1218,6 @@ async def test_order_placement():
                         return False
                     await asyncio.sleep(wait_time)
 
-            # Kết luận: TP/SL được đặt nhưng không kích hoạt trong thời gian test
             log_with_format('info', "Kiểm tra hoàn tất: TP/SL được đặt thành công nhưng không kích hoạt trong {time}s",
                             variables={'time': str(monitoring_time)}, section="MINER")
             await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Test hoàn tất: TP/SL được đặt nhưng không kích hoạt trong {monitoring_time}s")
@@ -1212,7 +1225,7 @@ async def test_order_placement():
 
     except Exception as e:
         log_with_format('error', "Lỗi nghiêm trọng trong kiểm tra: {error}", variables={'error': str(e)}, section="MINER")
-        if position:  # Đóng vị thế nếu có lỗi
+        if position:
             for attempt in range(max_retries):
                 try:
                     await close_position('sell', TEST_QUANTITY, current_price, "Test Failed: Exception")
@@ -1224,7 +1237,6 @@ async def test_order_placement():
                         await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] KHẨN CẤP: Test thất bại và không đóng được vị thế: {str(e)}")
         await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Test thất bại: {str(e)}")
         return False
-#
 #
 async def check_position_status(current_price):
     global position
