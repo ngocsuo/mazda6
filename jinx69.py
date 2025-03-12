@@ -19,7 +19,7 @@ from colorama import init, Fore, Style
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestRegressor
 import traceback
-
+import math
 # Khởi tạo colorama
 init()
 
@@ -242,7 +242,6 @@ async def test_order_placement():
         markets = await exchange.fetch_markets()
         try:
             symbol_info = next(m for m in markets if m['symbol'] == SYMBOL)
-            # Kiểm tra và chuyển đổi quantity_precision
             precision = symbol_info['precision']['amount']
             if isinstance(precision, (int, float)):
                 quantity_precision = int(precision)
@@ -265,15 +264,29 @@ async def test_order_placement():
             return False
 
         # Tính TEST_QUANTITY đảm bảo notional >= 20
-        TEST_QUANTITY = max(0.01, MIN_NOTIONAL_VALUE / current_price)
-        log_with_format('debug', "Trước khi làm tròn: TEST_QUANTITY={qty}", 
-                        variables={'qty': f"{TEST_QUANTITY:.6f}"}, section="MINER")
-        TEST_QUANTITY = round(TEST_QUANTITY, quantity_precision)  # quantity_precision đã là int
+        raw_quantity = MIN_NOTIONAL_VALUE / current_price  # Giá trị thô trước khi làm tròn
+        log_with_format('debug', "Trước khi làm tròn: Raw TEST_QUANTITY={qty}", 
+                        variables={'qty': f"{raw_quantity:.6f}"}, section="MINER")
+        
+        if quantity_precision == 0:
+            # Nếu precision=0, làm tròn lên để đảm bảo notional >= 20
+            TEST_QUANTITY = math.ceil(raw_quantity)
+        else:
+            # Nếu precision > 0, làm tròn bình thường theo số chữ số thập phân
+            TEST_QUANTITY = round(raw_quantity, quantity_precision)
+        
         notional_value = TEST_QUANTITY * current_price
+        log_with_format('debug', "Sau khi làm tròn: TEST_QUANTITY={qty}, Notional={notional}", 
+                        variables={'qty': f"{TEST_QUANTITY:.{quantity_precision}f}", 'notional': f"{notional_value:.2f}"}, section="MINER")
+
+        # Điều chỉnh lại nếu notional vẫn nhỏ hơn 20
         if notional_value < MIN_NOTIONAL_VALUE:
             log_with_format('debug', "Notional nhỏ hơn 20, điều chỉnh lại: {notional}", 
                             variables={'notional': f"{notional_value:.2f}"}, section="MINER")
-            TEST_QUANTITY = round(MIN_NOTIONAL_VALUE / current_price, quantity_precision)
+            if quantity_precision == 0:
+                TEST_QUANTITY = math.ceil(MIN_NOTIONAL_VALUE / current_price)
+            else:
+                TEST_QUANTITY = round(MIN_NOTIONAL_VALUE / current_price + 0.0001, quantity_precision)  # Thêm một chút để vượt qua 20
             notional_value = TEST_QUANTITY * current_price
 
         log_with_format('info', "Thông số test: Giá={price}, Số lượng={qty}, Giá trị={notional}",
