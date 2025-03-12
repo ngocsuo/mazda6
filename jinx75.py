@@ -233,28 +233,23 @@ async def test_order_placement():
     global exchange, current_price, position
     log_with_format('info', "=== BẮT ĐẦU KIỂM TRA ĐẶT VỊ THẾ VÀ TP/SL ===", section="MINER")
     MIN_NOTIONAL_VALUE = 20.0  # Giá trị tối thiểu theo quy định Binance Futures
-    wait_time = 5  # Thời gian chờ giữa các bước
+    TEST_QUANTITY = 1  # Set cứng TEST_QUANTITY = 1
+    wait_time = 5
     max_retries = 3
-    monitoring_time = 120  # Thời gian theo dõi tối đa (2 phút)
+    monitoring_time = 120
 
     try:
-        # Lấy thông tin symbol từ API Binance
+        # Lấy thông tin symbol từ API Binance (vẫn giữ để debug nếu cần)
         markets = await exchange.fetch_markets()
-        try:
-            symbol_info = next(m for m in markets if m['symbol'] == SYMBOL)
-            precision = symbol_info['precision']['amount']
-            if isinstance(precision, (int, float)):
-                quantity_precision = int(precision)
-            else:
-                log_with_format('error', "Quantity precision không hợp lệ: {prec}", 
-                                variables={'prec': str(precision)}, section="MINER")
-                return False
-            log_with_format('debug', "Thông tin symbol: Quantity Precision={prec}", 
-                            variables={'prec': str(quantity_precision)}, section="MINER")
-        except StopIteration:
+        symbol_info = next((m for m in markets if m['symbol'] == SYMBOL), None)
+        if not symbol_info:
             log_with_format('error', "Không tìm thấy thông tin symbol {symbol}", 
                             variables={'symbol': SYMBOL}, section="MINER")
             return False
+        precision = symbol_info['precision']['amount']
+        quantity_precision = int(precision) if isinstance(precision, (int, float)) else 0
+        log_with_format('debug', "Thông tin symbol: Quantity Precision={prec}", 
+                        variables={'prec': str(quantity_precision)}, section="MINER")
 
         # Lấy giá hiện tại
         current_price = await get_price()
@@ -263,41 +258,14 @@ async def test_order_placement():
             await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Test thất bại: Không lấy được giá hiện tại")
             return False
 
-        # Tính TEST_QUANTITY đảm bảo notional >= 20
-        raw_quantity = MIN_NOTIONAL_VALUE / current_price
-        log_with_format('debug', "Trước khi làm tròn: Raw TEST_QUANTITY={qty}", 
-                        variables={'qty': f"{raw_quantity:.6f}"}, section="MINER")
-
-        # Xử lý làm tròn dựa trên quantity_precision
-        if quantity_precision == 0:
-            TEST_QUANTITY = math.ceil(raw_quantity)  # Làm tròn lên số nguyên gần nhất
-        else:
-            TEST_QUANTITY = round(raw_quantity, quantity_precision)  # Làm tròn theo precision
-        
+        # Tính notional_value với TEST_QUANTITY set cứng
         notional_value = TEST_QUANTITY * current_price
-        log_with_format('debug', "Sau khi làm tròn: TEST_QUANTITY={qty}, Notional={notional}", 
-                        variables={'qty': f"{TEST_QUANTITY:.{max(quantity_precision, 1)}f}", 
-                                   'notional': f"{notional_value:.2f}"}, section="MINER")
-
-        # Điều chỉnh nếu notional vẫn nhỏ hơn 20
-        if notional_value < MIN_NOTIONAL_VALUE:
-            log_with_format('debug', "Notional nhỏ hơn 20, điều chỉnh lại: {notional}", 
-                            variables={'notional': f"{notional_value:.2f}"}, section="MINER")
-            if quantity_precision == 0:
-                TEST_QUANTITY = math.ceil(MIN_NOTIONAL_VALUE / current_price)
-            else:
-                TEST_QUANTITY = round(MIN_NOTIONAL_VALUE / current_price + 0.0001, quantity_precision)
-            notional_value = TEST_QUANTITY * current_price
-            log_with_format('debug', "Sau khi điều chỉnh: TEST_QUANTITY={qty}, Notional={notional}", 
-                            variables={'qty': f"{TEST_QUANTITY:.{max(quantity_precision, 1)}f}", 
-                                       'notional': f"{notional_value:.2f}"}, section="MINER")
-
         log_with_format('info', "Thông số test: Giá={price}, Số lượng={qty}, Giá trị={notional}",
-                        variables={'price': f"{current_price:.2f}", 'qty': f"{TEST_QUANTITY:.{max(quantity_precision, 1)}f}", 
+                        variables={'price': f"{current_price:.2f}", 'qty': str(TEST_QUANTITY), 
                                    'notional': f"{notional_value:.2f}"}, section="MINER")
 
         if notional_value < MIN_NOTIONAL_VALUE:
-            log_with_format('error', "Không thể tạo TEST_QUANTITY hợp lệ: Notional={notional} < 20", 
+            log_with_format('error', "TEST_QUANTITY set cứng không đủ lớn: Notional={notional} < 20", 
                             variables={'notional': f"{notional_value:.2f}"}, section="MINER")
             await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Test thất bại: Giá trị danh nghĩa {notional_value:.2f} < 20")
             return False
@@ -442,9 +410,8 @@ async def test_order_placement():
                                     variables={'error': str(close_error)}, section="MINER")
                     if attempt == max_retries - 1:
                         await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] KHẨN CẤP: Test thất bại và không đóng được vị thế: {str(e)}")
-        await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Test thất bại: {str(e)}")
+        await bot.send_message(chat_id=CHAT_ID stanowtext=f"[{SYMBOL}] Test thất bại: {str(e)}")
         return False
-
 async def check_and_close_position(current_price):
     global position
     if not position:
