@@ -1748,32 +1748,40 @@ async def main():
     TELEGRAM_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
     TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
-    # Initialize exchange
+    # Initialize exchange with async support
     exchange = ccxt.async_support.Binance({
         'apiKey': API_KEY,
         'secret': API_SECRET,
         'enableRateLimit': True,
-        'options': {'defaultType': 'future'},
+        'options': {'defaultType': 'future'},  # Matches your earlier configuration
     })
     bot = telegram.Bot(TELEGRAM_TOKEN)
     CHAT_ID = TELEGRAM_CHAT_ID
     SYMBOL = 'ETH/USDT'
     LEVERAGE = 20
 
-    # Menu
+    # Display menu
     print("=== Trading Bot Menu ===")
     print("1. Test Setup (Kiểm tra thiết lập)")
     print("2. Auto Trade (Giao dịch tự động)")
     choice = input("Nhập lựa chọn của bạn (1 hoặc 2): ").strip()
 
     if choice == "1":
-        print("Test mode selected (implement test_order_placement)")
-        # await test_order_placement()
+        log_with_format('info', "Bắt đầu kiểm tra thiết lập", section="MAIN")
+        test_success = await test_order_placement()
+        if test_success:
+            log_with_format('info', "Kiểm tra thiết lập thành công!", section="MAIN")
+            await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Kiểm tra thiết lập thành công!")
+        else:
+            log_with_format('error', "Kiểm tra thiết lập thất bại!", section="MAIN")
+            await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Kiểm tra thiết lập thất bại. Vui lòng kiểm tra thủ công!")
+        await shutdown_bot("Kết thúc kiểm tra thiết lập")
     elif choice == "2":
-        print("Auto trade mode selected (implement optimized_trading_bot)")
-        # await optimized_trading_bot()
+        log_with_format('info', "Bắt đầu chế độ giao dịch tự động", section="MAIN")
+        await optimized_trading_bot()
     else:
         print("Lựa chọn không hợp lệ. Vui lòng chọn 1 hoặc 2.")
+        await shutdown_bot("Lựa chọn không hợp lệ")
 
 if __name__ == "__main__":
     asyncio.run(main())
