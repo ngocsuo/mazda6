@@ -1742,7 +1742,25 @@ async def shutdown_bot(reason, error=None):
 async def main():
     global exchange, bot, CHAT_ID, SYMBOL, LEVERAGE
 
-    # Hiển thị menu
+    # Load environment variables
+    API_KEY = os.getenv('BINANCE_API_KEY')
+    API_SECRET = os.getenv('BINANCE_API_SECRET')
+    TELEGRAM_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+    TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
+
+    # Initialize exchange (sửa để dùng alias 'ccxt' thay vì 'ccxt.async_support')
+    exchange = ccxt.Binance({  # Thay 'ccxt.async_support.Binance' bằng 'ccxt.Binance'
+        'apiKey': API_KEY,
+        'secret': API_SECRET,
+        'enableRateLimit': True,
+        'options': {'defaultType': 'future'},
+    })
+    bot = telegram.Bot(TELEGRAM_TOKEN)
+    CHAT_ID = TELEGRAM_CHAT_ID
+    SYMBOL = 'ETH/USDT'
+    LEVERAGE = 20
+
+    # Menu
     print("=== Trading Bot Menu ===")
     print("1. Test Setup (Kiểm tra thiết lập)")
     print("2. Auto Trade (Giao dịch tự động)")
@@ -1764,6 +1782,3 @@ async def main():
     else:
         print("Lựa chọn không hợp lệ. Vui lòng chọn 1 hoặc 2.")
         await shutdown_bot("Lựa chọn không hợp lệ")
-
-if __name__ == "__main__":
-    asyncio.run(main())
