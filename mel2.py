@@ -761,10 +761,10 @@ async def place_order_with_tp_sl(side, price, quantity, volatility, predicted_pr
         # Lấy tick size từ thông tin biểu tượng
         symbol_info = await exchange.load_markets()
         tick_size = symbol_info[SYMBOL]['precision']['price']
-        min_price_diff = entry_price * 0.01  # Khoảng cách tối thiểu 1%, có thể điều chỉnh
+        min_price_diff = entry_price * 0.01  # Khoảng cách tối thiểu 1%
 
         # Tính SL và TP với điều chỉnh biến động
-        STOP_LOSS_PERCENT_ADJUSTED = STOP_LOSS_PERCENT + max(volatility, 0.01)  # Đảm bảo tối thiểu 1%
+        STOP_LOSS_PERCENT_ADJUSTED = STOP_LOSS_PERCENT + max(volatility, 0.01)
         TAKE_PROFIT_PERCENT_ADJUSTED = TAKE_PROFIT_PERCENT + max(volatility, 0.01)
 
         if side == 'buy':
@@ -776,8 +776,8 @@ async def place_order_with_tp_sl(side, price, quantity, volatility, predicted_pr
 
         # Đảm bảo khoảng cách tối thiểu và tránh kích hoạt ngay
         if side == 'buy':
-            sl_price = max(sl_price, current_price * (1 - STOP_LOSS_PERCENT_ADJUSTED * 1.5))  # Tăng khoảng cách SL
-            tp_price = min(tp_price, current_price * (1 + TAKE_PROFIT_PERCENT_ADJUSTED * 1.5))  # Tăng khoảng cách TP
+            sl_price = max(sl_price, current_price * (1 - STOP_LOSS_PERCENT_ADJUSTED * 1.5))
+            tp_price = min(tp_price, current_price * (1 + TAKE_PROFIT_PERCENT_ADJUSTED * 1.5))
         else:
             sl_price = min(sl_price, current_price * (1 + STOP_LOSS_PERCENT_ADJUSTED * 1.5))
             tp_price = max(tp_price, current_price * (1 - TAKE_PROFIT_PERCENT_ADJUSTED * 1.5))
@@ -800,7 +800,7 @@ async def place_order_with_tp_sl(side, price, quantity, volatility, predicted_pr
             'tp_price': tp_price
         }
 
-        # Đặt Stop Loss
+        # Đặt Stop Loss (loại bỏ reduceOnly nếu không cần thiết)
         sl_order_id = None
         for attempt in range(max_retries):
             try:
@@ -811,9 +811,8 @@ async def place_order_with_tp_sl(side, price, quantity, volatility, predicted_pr
                     amount=quantity,
                     params={
                         'stopPrice': sl_price,
-                        'reduceOnly': True,
                         'positionSide': 'BOTH',
-                        'closePosition': True  # Đảm bảo đóng vị thế
+                        'closePosition': True  # Đảm bảo đóng vị thế khi SL được kích hoạt
                     }
                 )
                 sl_order_id = sl_order['id']
@@ -836,7 +835,7 @@ async def place_order_with_tp_sl(side, price, quantity, volatility, predicted_pr
                     raise
                 await asyncio.sleep(wait_time)
 
-        # Đặt Take Profit
+        # Đặt Take Profit (loại bỏ reduceOnly nếu không cần thiết)
         tp_order_id = None
         for attempt in range(max_retries):
             try:
@@ -847,7 +846,6 @@ async def place_order_with_tp_sl(side, price, quantity, volatility, predicted_pr
                     amount=quantity,
                     params={
                         'stopPrice': tp_price,
-                        'reduceOnly': True,
                         'positionSide': 'BOTH',
                         'closePosition': True
                     }
