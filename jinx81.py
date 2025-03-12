@@ -230,10 +230,14 @@ async def watch_position_and_price():
 
 
 
+
+
 async def test_order_placement():
     global exchange, current_price, position
+    # Kiểm tra file đang chạy
+    log_with_format('info', "Đang chạy file: {file}", variables={'file': __file__}, section="MINER")
     log_with_format('info', "=== BẮT ĐẦU KIỂM TRA ĐẶT VỊ THẾ VÀ TP/SL ===", section="MINER")
-    log_with_format('info', "Phiên bản code: TEST_QUANTITY set cứng = 1", section="MINER")  # Thêm để xác nhận
+    log_with_format('info', "Phiên bản code: TEST_QUANTITY set cứng = 1", section="MINER")
     MIN_NOTIONAL_VALUE = 20.0
     TEST_QUANTITY = 1  # Set cứng TEST_QUANTITY = 1
     wait_time = 5
@@ -414,7 +418,6 @@ async def test_order_placement():
                         await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] KHẨN CẤP: Test thất bại và không đóng được vị thế: {str(e)}")
         await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Test thất bại: {str(e)}")
         return False
-
 
 async def check_and_close_position(current_price):
     global position
