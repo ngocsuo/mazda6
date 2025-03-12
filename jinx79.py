@@ -242,7 +242,7 @@ async def test_order_placement():
             return False
 
         # Tính test_quantity dựa trên giá hiện tại để đảm bảo notional ≥ 20 USDT
-        test_quantity = max(0.011, MIN_NOTIONAL_VALUE / current_price)  # Đảm bảo ít nhất 0.011 ETH hoặc đủ 20 USDT
+        test_quantity = max(0.04, MIN_NOTIONAL_VALUE / current_price)  # Đảm bảo ít nhất 0.011 ETH hoặc đủ 20 USDT
         notional_value = test_quantity * current_price
         log_with_format('info', "Tính toán test_quantity: Giá={price}, Số lượng={qty}, Giá trị nominal={notional}",
                         variables={'price': f"{current_price:.2f}", 'qty': f"{test_quantity:.4f}", 'notional': f"{notional_value:.2f}"},
