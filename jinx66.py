@@ -18,6 +18,7 @@ from strategies import TrendFollowing, Scalping, MeanReversion
 from colorama import init, Fore, Style
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestRegressor
+import traceback
 
 # Khởi tạo colorama
 init()
@@ -227,6 +228,7 @@ async def watch_position_and_price():
                            variables={'error': str(e)}, section="NET")
             await asyncio.sleep(5)
 
+
 async def test_order_placement():
     global exchange, current_price, position
     log_with_format('info', "=== BẮT ĐẦU KIỂM TRA ĐẶT VỊ THẾ VÀ TP/SL ===", section="MINER")
@@ -238,10 +240,22 @@ async def test_order_placement():
     try:
         # Lấy thông tin symbol từ API Binance
         markets = await exchange.fetch_markets()
-        symbol_info = next(m for m in markets if m['symbol'] == SYMBOL)
-        quantity_precision = int(symbol_info['precision']['amount'])  # Chuyển thành int
-        log_with_format('debug', "Thông tin symbol: Quantity Precision={prec}", 
-                        variables={'prec': str(quantity_precision)}, section="MINER")
+        try:
+            symbol_info = next(m for m in markets if m['symbol'] == SYMBOL)
+            # Kiểm tra và chuyển đổi quantity_precision
+            precision = symbol_info['precision']['amount']
+            if isinstance(precision, (int, float)):
+                quantity_precision = int(precision)
+            else:
+                log_with_format('error', "Quantity precision không hợp lệ: {prec}", 
+                                variables={'prec': str(precision)}, section="MINER")
+                return False
+            log_with_format('debug', "Thông tin symbol: Quantity Precision={prec}", 
+                            variables={'prec': str(quantity_precision)}, section="MINER")
+        except StopIteration:
+            log_with_format('error', "Không tìm thấy thông tin symbol {symbol}", 
+                            variables={'symbol': SYMBOL}, section="MINER")
+            return False
 
         # Lấy giá hiện tại
         current_price = await get_price()
@@ -251,11 +265,15 @@ async def test_order_placement():
             return False
 
         # Tính TEST_QUANTITY đảm bảo notional >= 20
-        TEST_QUANTITY = max(0.01, MIN_NOTIONAL_VALUE / current_price)  # Đảm bảo tối thiểu 0.01 ETH
-        TEST_QUANTITY = round(TEST_QUANTITY, quantity_precision)  # Làm tròn theo precision (đã là int)
+        TEST_QUANTITY = max(0.01, MIN_NOTIONAL_VALUE / current_price)
+        log_with_format('debug', "Trước khi làm tròn: TEST_QUANTITY={qty}", 
+                        variables={'qty': f"{TEST_QUANTITY:.6f}"}, section="MINER")
+        TEST_QUANTITY = round(TEST_QUANTITY, quantity_precision)  # quantity_precision đã là int
         notional_value = TEST_QUANTITY * current_price
         if notional_value < MIN_NOTIONAL_VALUE:
-            TEST_QUANTITY = round(MIN_NOTIONAL_VALUE / current_price, quantity_precision)  # Điều chỉnh lại
+            log_with_format('debug', "Notional nhỏ hơn 20, điều chỉnh lại: {notional}", 
+                            variables={'notional': f"{notional_value:.2f}"}, section="MINER")
+            TEST_QUANTITY = round(MIN_NOTIONAL_VALUE / current_price, quantity_precision)
             notional_value = TEST_QUANTITY * current_price
 
         log_with_format('info', "Thông số test: Giá={price}, Số lượng={qty}, Giá trị={notional}",
@@ -274,9 +292,9 @@ async def test_order_placement():
             side='buy',
             price=current_price,
             quantity=TEST_QUANTITY,
-            volatility=0.0,  # Không điều chỉnh volatility trong test
-            predicted_price=current_price * 1.02,  # Giả lập TP tăng 2%
-            atr=0  # Giả lập ATR bằng 0
+            volatility=0.0,
+            predicted_price=current_price * 1.02,
+            atr=0
         )
 
         if test_order is None or not position:
@@ -325,7 +343,7 @@ async def test_order_placement():
             await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Test thất bại: SL={sl_exists}, TP={tp_exists}")
             return False
 
-        # Theo dõi giá để kiểm tra TP/SL có kích hoạt không
+        # Theo dõi giá để kiểm tra TP/SL
         log_with_format('info', "Bắt đầu theo dõi giá để kiểm tra TP/SL trong {time}s",
                         variables={'time': str(monitoring_time)}, section="MINER")
         start_time = time.time()
@@ -341,7 +359,6 @@ async def test_order_placement():
                             variables={'price': f"{current_price:.2f}", 'sl': f"{position['sl_price']:.2f}", 
                                        'tp': f"{position['tp_price']:.2f}"}, section="MINER")
 
-            # Kiểm tra trạng thái vị thế
             positions = await exchange.fetch_positions([SYMBOL])
             current_position = next((p for p in positions if p['symbol'] == SYMBOL), None)
 
@@ -397,7 +414,8 @@ async def test_order_placement():
             return True
 
     except Exception as e:
-        log_with_format('error', "Lỗi nghiêm trọng trong kiểm tra: {error}", variables={'error': str(e)}, section="MINER")
+        log_with_format('error', "Lỗi nghiêm trọng trong kiểm tra: {error}\nTrace: {trace}", 
+                        variables={'error': str(e), 'trace': traceback.format_exc()}, section="MINER")
         if position:
             for attempt in range(max_retries):
                 try:
