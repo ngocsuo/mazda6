@@ -1782,3 +1782,6 @@ async def main():
     else:
         print("Lựa chọn không hợp lệ. Vui lòng chọn 1 hoặc 2.")
         await shutdown_bot("Lựa chọn không hợp lệ")
+        
+if __name__ == "__main__":
+    asyncio.run(main())
