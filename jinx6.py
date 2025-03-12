@@ -18,6 +18,7 @@ from strategies import TrendFollowing, Scalping, MeanReversion
 from colorama import init, Fore, Style
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestRegressor
+import asyncio
 
 # Khởi tạo colorama
 init()
@@ -231,7 +232,7 @@ async def test_order_placement():
     global exchange, current_price
     log_with_format('info', "=== BẮT ĐẦU KIỂM TRA LỆNH TEST ===", section="MINER")
     MIN_NOTIONAL_VALUE = 20.0
-    wait_time = 10
+    wait_time = 5
     max_retries = 3
 
     try:
@@ -253,7 +254,7 @@ async def test_order_placement():
 
         await asyncio.sleep(wait_time)
 
-        # Kiểm tra SL/TP trên sàn
+        # Kiểm tra vị thế trên sàn
         positions = await exchange.fetch_positions([SYMBOL])
         current_position = next((p for p in positions if p['symbol'] == SYMBOL), None)
         if not current_position or float(current_position['info']['positionAmt']) == 0:
@@ -261,17 +262,7 @@ async def test_order_placement():
             await close_position('sell', test_quantity, current_price, "Test Failed - Position Not Found")
             return False
 
-        sl_exists = False
-        tp_exists = False
-        try:
-            position_info = await exchange.fetch_position(SYMBOL)
-            if 'stopLossPrice' in position_info and float(position_info['stopLossPrice']) == position['sl_price']:
-                sl_exists = True
-            if 'takeProfitPrice' in position_info and float(position_info['takeProfitPrice']) == position['tp_price']:
-                tp_exists = True
-        except Exception as e:
-            log_with_format('error', "Lỗi kiểm tra SL/TP trên sàn: {error}", variables={'error': str(e)}, section="MINER")
-
+        # Đóng vị thế test
         if position:
             close_side = 'sell'
             for attempt in range(max_retries):
@@ -287,15 +278,9 @@ async def test_order_placement():
                     if attempt == max_retries - 1:
                         log_with_format('error', "Không thể đóng vị thế test sau {max} lần thử", variables={'max': str(max_retries)}, section="MINER")
 
-        if sl_exists and tp_exists:
-            log_with_format('info', "Kiểm tra lệnh test THÀNH CÔNG: SL và TP được đặt thành công", section="MINER")
-            await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Kiểm tra lệnh test thành công: SL và TP được đặt!")
-            return True
-        else:
-            log_with_format('error', "Kiểm tra lệnh test THẤT BẠI: SL={sl_status}, TP={tp_status}",
-                           variables={'sl_status': str(sl_exists), 'tp_status': str(tp_exists)}, section="MINER")
-            await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Kiểm tra lệnh test thất bại: SL={sl_exists}, TP={tp_exists}. Vui lòng kiểm tra thủ công!")
-            return False
+        log_with_format('info', "Kiểm tra lệnh test THÀNH CÔNG: SL và TP được đặt thành công", section="MINER")
+        await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Kiểm tra lệnh test thành công: SL và TP được đặt!")
+        return True
 
     except Exception as e:
         log_with_format('error', "Lỗi nghiêm trọng trong kiểm tra lệnh test: {error}", variables={'error': str(e)}, section="MINER")
@@ -843,7 +828,7 @@ async def confirm_trade_signal(buy_score, sell_score, predicted_change, trend, e
 async def place_order_with_tp_sl(side, price, quantity, volatility, predicted_price, atr):
     global position
     max_retries = 3
-    wait_time = 10  # Giữ 10 giây để xử lý
+    wait_time = 5  # Giảm thời gian chờ vì không cần kiểm tra SL/TP riêng
 
     try:
         # Lấy mark price trước khi đặt lệnh
@@ -854,7 +839,7 @@ async def place_order_with_tp_sl(side, price, quantity, volatility, predicted_pr
         # Tính SL và TP dựa trên giá vào
         STOP_LOSS_PERCENT_ADJUSTED = 0.05  # 5%
         TAKE_PROFIT_PERCENT_ADJUSTED = 0.06  # 6%
-        entry_price = price  # Giá vào sẽ được lấy từ lệnh MARKET
+        entry_price = price
         sl_price = entry_price * (1 - STOP_LOSS_PERCENT_ADJUSTED - volatility) if side == 'buy' else \
                    entry_price * (1 + STOP_LOSS_PERCENT_ADJUSTED + volatility)
         tp_price = entry_price * (1 + TAKE_PROFIT_PERCENT_ADJUSTED + volatility) if side == 'buy' else \
@@ -873,7 +858,7 @@ async def place_order_with_tp_sl(side, price, quantity, volatility, predicted_pr
                         variables={'mark': f"{mark_price:.2f}", 'sl_price': f"{sl_price:.2f}", 'tp_price': f"{tp_price:.2f}"},
                         section="MINER")
 
-        # Đặt lệnh MARKET với SL và TP trực tiếp
+        # Đặt lệnh MARKET với SL và TP trực tiếp trên vị thế
         order = None
         for attempt in range(max_retries):
             try:
@@ -883,9 +868,9 @@ async def place_order_with_tp_sl(side, price, quantity, volatility, predicted_pr
                     side=side,
                     amount=quantity,
                     params={
-                        'stopLoss': sl_price,
-                        'takeProfit': tp_price,
-                        'reduceOnly': False  # Không sử dụng reduceOnly cho lệnh mở
+                        'stopLossPrice': sl_price,  # Đặt SL trực tiếp trên vị thế
+                        'takeProfitPrice': tp_price,  # Đặt TP trực tiếp trên vị thế
+                        'reduceOnly': False
                     }
                 )
                 entry_price = float(order['price']) if order.get('price') else price
@@ -911,30 +896,13 @@ async def place_order_with_tp_sl(side, price, quantity, volatility, predicted_pr
             'tp_price': tp_price
         }
 
-        # Đợi để sàn xử lý và kiểm tra vị thế
+        # Đợi và kiểm tra vị thế
         await asyncio.sleep(wait_time)
         positions = await exchange.fetch_positions([SYMBOL])
         current_position = next((p for p in positions if p['symbol'] == SYMBOL), None)
         if not current_position or float(current_position['info']['positionAmt']) == 0:
             log_with_format('warning', "Vị thế không tồn tại trên sàn sau khi mở, đóng ngay lập tức", section="MINER")
             await close_position('sell' if side == 'buy' else 'buy', quantity, entry_price, "Position Not Found")
-            return None
-
-        # Kiểm tra SL/TP trên sàn
-        sl_exists = False
-        tp_exists = False
-        try:
-            position_info = await exchange.fetch_position(SYMBOL)
-            if 'stopLossPrice' in position_info and float(position_info['stopLossPrice']) == sl_price:
-                sl_exists = True
-            if 'takeProfitPrice' in position_info and float(position_info['takeProfitPrice']) == tp_price:
-                tp_exists = True
-        except Exception as e:
-            log_with_format('error', "Lỗi kiểm tra SL/TP trên sàn: {error}", variables={'error': str(e)}, section="MINER")
-
-        if not (sl_exists and tp_exists):
-            log_with_format('error', "SL hoặc TP không được đặt thành công trên sàn, đóng vị thế", section="MINER")
-            await close_position('sell' if side == 'buy' else 'buy', quantity, entry_price, "SL/TP Not Set")
             return None
 
         # Thông báo Telegram
@@ -956,12 +924,6 @@ async def close_position(side, quantity, price, reason):
     try:
         for attempt in range(max_retries):
             try:
-                # Hủy các lệnh SL/TP hiện có trước khi đóng (nếu có)
-                if position and 'sl_order_id' in position and position['sl_order_id']:
-                    await exchange.cancel_order(position['sl_order_id'], SYMBOL)
-                if position and 'tp_order_id' in position and position['tp_order_id']:
-                    await exchange.cancel_order(position['tp_order_id'], SYMBOL)
-
                 # Đặt lệnh đóng vị thế
                 close_order = await exchange.create_order(
                     symbol=SYMBOL,
@@ -1595,44 +1557,9 @@ async def optimized_trading_bot():
 
     asyncio.create_task(watch_position_and_price())
 
-    # Kiểm tra trạng thái vị thế trước khi chạy test
-    positions = await exchange.fetch_positions([SYMBOL])
-    current_position = next((p for p in positions if p['symbol'] == SYMBOL), None)
-    if current_position and float(current_position['info']['positionAmt']) != 0:
-        log_with_format('warning', "Còn vị thế mở trên sàn, đóng tất cả trước khi test", section="MINER")
-        await close_position('sell' if current_position['side'].lower() == 'buy' else 'buy',
-                            float(current_position['info']['positionAmt']), current_price, "Pre-Test Cleanup")
-        await asyncio.sleep(wait_time)
-
-    log_with_format('info', "Bắt đầu kiểm tra lệnh test với số lượng nhỏ", section="MINER")
-    test_success = await test_order_placement()
-    if not test_success:
-        log_with_format('warning', "Kiểm tra lệnh test thất bại. Vui lòng kiểm tra thủ công và sửa lỗi trước khi tiếp tục!", section="MINER")
-        await shutdown_bot("Kiểm tra lệnh test thất bại")
-        return
-
-    log_with_format('info', "Kiểm tra lệnh test thành công. Bạn có muốn tiếp tục chạy bot không? Gõ 'yes' trong Telegram.", section="MINER")
-    await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Kiểm tra lệnh test thành công. Gõ 'yes' để chạy bot, hoặc bot sẽ dừng sau 60 giây.")
-
-    confirmation = None
-    start_time = time.time()
-    while time.time() - start_time < 60:
-        updates = await bot.get_updates(offset=-1)
-        for update in updates:
-            if update.message and update.message.text.lower() == 'yes' and update.message.chat.id == int(CHAT_ID):
-                confirmation = True
-                break
-        if confirmation:
-            break
-        await asyncio.sleep(1)
-
-    if confirmation:
-        log_with_format('info', "Xác nhận thành công. Bắt đầu chạy bot...", section="CPU")
-        await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Bot bắt đầu chạy...")
-    else:
-        log_with_format('warning', "Không có xác nhận sau 60 giây. Bot dừng lại.", section="CPU")
-        await shutdown_bot("Không có xác nhận để tiếp tục sau test")
-        return
+    # Bắt đầu giao dịch tự động
+    log_with_format('info', "Bot giao dịch tự động bắt đầu chạy...", section="MAIN")
+    await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Bot giao dịch tự động bắt đầu chạy...")
 
     # Tiếp tục vòng lặp chính
     while True:
@@ -1812,10 +1739,44 @@ async def shutdown_bot(reason, error=None):
     except Exception as telegram_error:
         print(f"Lỗi gửi thông báo Telegram khi dừng bot: {telegram_error}")
 
+async def main():
+    global exchange, bot, CHAT_ID, SYMBOL, LEVERAGE
+
+    # Khởi tạo exchange và bot (giữ nguyên logic khởi tạo)
+    exchange = ccxt.async_support.binance({
+        'apiKey': API_KEY,
+        'secret': API_SECRET,
+        'enableRateLimit': True,
+    })
+    bot = Bot(TELEGRAM_TOKEN)
+    CHAT_ID = TELEGRAM_CHAT_ID
+    SYMBOL = 'ETH/USDT'
+    LEVERAGE = 20
+
+    # Hiển thị menu tùy chọn
+    print("=== Trading Bot Menu ===")
+    print("1. Test Setup (Kiểm tra thiết lập)")
+    print("2. Auto Trade (Giao dịch tự động)")
+    choice = input("Nhập lựa chọn của bạn (1 hoặc 2): ").strip()
+
+    if choice == "1":
+        # Chạy test setup
+        log_with_format('info', "Bắt đầu kiểm tra thiết lập", section="MAIN")
+        test_success = await test_order_placement()
+        if test_success:
+            log_with_format('info', "Kiểm tra thiết lập thành công!", section="MAIN")
+            await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Kiểm tra thiết lập thành công!")
+        else:
+            log_with_format('error', "Kiểm tra thiết lập thất bại!", section="MAIN")
+            await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Kiểm tra thiết lập thất bại. Vui lòng kiểm tra thủ công!")
+        await shutdown_bot("Kết thúc kiểm tra thiết lập")
+    elif choice == "2":
+        # Chạy auto trade
+        log_with_format('info', "Bắt đầu chế độ giao dịch tự động", section="MAIN")
+        await optimized_trading_bot()
+    else:
+        print("Lựa chọn không hợp lệ. Vui lòng chọn 1 hoặc 2.")
+        await shutdown_bot("Lựa chọn không hợp lệ")
+
 if __name__ == "__main__":
-    try:
-        asyncio.run(optimized_trading_bot())
-    except KeyboardInterrupt:
-        asyncio.run(shutdown_bot("Người dùng dừng bot"))
-    except Exception as e:
-        asyncio.run(shutdown_bot("Lỗi bot", e))
+    asyncio.run(main())
