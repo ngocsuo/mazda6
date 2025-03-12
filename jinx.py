@@ -230,7 +230,7 @@ async def watch_position_and_price():
 async def test_order_placement():
     global exchange, current_price
     log_with_format('info', "=== BẮT ĐẦU KIỂM TRA LỆNH TEST ===", section="MINER")
-    test_quantity = 0.01  # Số lượng nhỏ để test (0.01 ETH)
+    MIN_NOTIONAL_VALUE = 20.0  # Giá trị nominal tối thiểu theo quy định Binance
     wait_time = 3  # Thời gian chờ giữa các lệnh
     max_retries = 3
 
@@ -240,6 +240,13 @@ async def test_order_placement():
         if current_price is None:
             log_with_format('error', "Không thể lấy giá hiện tại để test", section="NET")
             return False
+
+        # Tính test_quantity dựa trên giá hiện tại để đảm bảo notional ≥ 20 USDT
+        test_quantity = max(0.011, MIN_NOTIONAL_VALUE / current_price)  # Đảm bảo ít nhất 0.011 ETH hoặc đủ 20 USDT
+        notional_value = test_quantity * current_price
+        log_with_format('info', "Tính toán test_quantity: Giá={price}, Số lượng={qty}, Giá trị nominal={notional}",
+                        variables={'price': f"{current_price:.2f}", 'qty': f"{test_quantity:.4f}", 'notional': f"{notional_value:.2f}"},
+                        section="MINER")
 
         # Mở vị thế test với lệnh BUY
         test_order = await place_order_with_tp_sl('buy', current_price, test_quantity, 0.0, current_price, 0.0)
@@ -306,6 +313,7 @@ async def test_order_placement():
         log_with_format('error', "Lỗi nghiêm trọng trong kiểm tra lệnh test: {error}", variables={'error': str(e)}, section="MINER")
         await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Lỗi kiểm tra lệnh test: {str(e)}. Vui lòng kiểm tra thủ công!")
         return False
+    
 
 async def check_and_close_position(current_price):
     global position
