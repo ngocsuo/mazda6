@@ -1742,25 +1742,7 @@ async def shutdown_bot(reason, error=None):
 async def main():
     global exchange, bot, CHAT_ID, SYMBOL, LEVERAGE
 
-    # Load environment variables
-    API_KEY = os.getenv('BINANCE_API_KEY')
-    API_SECRET = os.getenv('BINANCE_API_SECRET')
-    TELEGRAM_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-    TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
-
-    # Initialize exchange with async support
-    exchange = ccxt.async_support.Binance({
-        'apiKey': API_KEY,
-        'secret': API_SECRET,
-        'enableRateLimit': True,
-        'options': {'defaultType': 'future'},  # Matches your earlier configuration
-    })
-    bot = telegram.Bot(TELEGRAM_TOKEN)
-    CHAT_ID = TELEGRAM_CHAT_ID
-    SYMBOL = 'ETH/USDT'
-    LEVERAGE = 20
-
-    # Display menu
+    # Hiển thị menu
     print("=== Trading Bot Menu ===")
     print("1. Test Setup (Kiểm tra thiết lập)")
     print("2. Auto Trade (Giao dịch tự động)")
@@ -1774,7 +1756,7 @@ async def main():
             await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Kiểm tra thiết lập thành công!")
         else:
             log_with_format('error', "Kiểm tra thiết lập thất bại!", section="MAIN")
-            await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Kiểm tra thiết lập thất bại. Vui lòng kiểm tra thủ công!")
+            await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Kiểm tra thiết lập thất bại!")
         await shutdown_bot("Kết thúc kiểm tra thiết lập")
     elif choice == "2":
         log_with_format('info', "Bắt đầu chế độ giao dịch tự động", section="MAIN")
