@@ -229,17 +229,19 @@ async def watch_position_and_price():
             await asyncio.sleep(5)
 
 
+
 async def test_order_placement():
     global exchange, current_price, position
     log_with_format('info', "=== BẮT ĐẦU KIỂM TRA ĐẶT VỊ THẾ VÀ TP/SL ===", section="MINER")
-    MIN_NOTIONAL_VALUE = 20.0  # Giá trị tối thiểu theo quy định Binance Futures
+    log_with_format('info', "Phiên bản code: TEST_QUANTITY set cứng = 1", section="MINER")  # Thêm để xác nhận
+    MIN_NOTIONAL_VALUE = 20.0
     TEST_QUANTITY = 1  # Set cứng TEST_QUANTITY = 1
     wait_time = 5
     max_retries = 3
     monitoring_time = 120
 
     try:
-        # Lấy thông tin symbol từ API Binance (vẫn giữ để debug nếu cần)
+        # Lấy thông tin symbol từ API Binance
         markets = await exchange.fetch_markets()
         symbol_info = next((m for m in markets if m['symbol'] == SYMBOL), None)
         if not symbol_info:
@@ -258,7 +260,7 @@ async def test_order_placement():
             await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Test thất bại: Không lấy được giá hiện tại")
             return False
 
-        # Tính notional_value với TEST_QUANTITY set cứng
+        # Tính notional_value với TEST_QUANTITY cố định
         notional_value = TEST_QUANTITY * current_price
         log_with_format('info', "Thông số test: Giá={price}, Số lượng={qty}, Giá trị={notional}",
                         variables={'price': f"{current_price:.2f}", 'qty': str(TEST_QUANTITY), 
@@ -410,9 +412,10 @@ async def test_order_placement():
                                     variables={'error': str(close_error)}, section="MINER")
                     if attempt == max_retries - 1:
                         await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] KHẨN CẤP: Test thất bại và không đóng được vị thế: {str(e)}")
-
+        await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Test thất bại: {str(e)}")
         return False
-        
+
+
 async def check_and_close_position(current_price):
     global position
     if not position:
