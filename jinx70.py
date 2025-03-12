@@ -264,33 +264,36 @@ async def test_order_placement():
             return False
 
         # Tính TEST_QUANTITY đảm bảo notional >= 20
-        raw_quantity = MIN_NOTIONAL_VALUE / current_price  # Giá trị thô trước khi làm tròn
+        raw_quantity = MIN_NOTIONAL_VALUE / current_price
         log_with_format('debug', "Trước khi làm tròn: Raw TEST_QUANTITY={qty}", 
                         variables={'qty': f"{raw_quantity:.6f}"}, section="MINER")
-        
+
+        # Xử lý làm tròn dựa trên quantity_precision
         if quantity_precision == 0:
-            # Nếu precision=0, làm tròn lên để đảm bảo notional >= 20
-            TEST_QUANTITY = math.ceil(raw_quantity)
+            TEST_QUANTITY = math.ceil(raw_quantity)  # Làm tròn lên số nguyên gần nhất
         else:
-            # Nếu precision > 0, làm tròn bình thường theo số chữ số thập phân
-            TEST_QUANTITY = round(raw_quantity, quantity_precision)
+            TEST_QUANTITY = round(raw_quantity, quantity_precision)  # Làm tròn theo precision
         
         notional_value = TEST_QUANTITY * current_price
         log_with_format('debug', "Sau khi làm tròn: TEST_QUANTITY={qty}, Notional={notional}", 
-                        variables={'qty': f"{TEST_QUANTITY:.{quantity_precision}f}", 'notional': f"{notional_value:.2f}"}, section="MINER")
+                        variables={'qty': f"{TEST_QUANTITY:.{max(quantity_precision, 1)}f}", 
+                                   'notional': f"{notional_value:.2f}"}, section="MINER")
 
-        # Điều chỉnh lại nếu notional vẫn nhỏ hơn 20
+        # Điều chỉnh nếu notional vẫn nhỏ hơn 20
         if notional_value < MIN_NOTIONAL_VALUE:
             log_with_format('debug', "Notional nhỏ hơn 20, điều chỉnh lại: {notional}", 
                             variables={'notional': f"{notional_value:.2f}"}, section="MINER")
             if quantity_precision == 0:
                 TEST_QUANTITY = math.ceil(MIN_NOTIONAL_VALUE / current_price)
             else:
-                TEST_QUANTITY = round(MIN_NOTIONAL_VALUE / current_price + 0.0001, quantity_precision)  # Thêm một chút để vượt qua 20
+                TEST_QUANTITY = round(MIN_NOTIONAL_VALUE / current_price + 0.0001, quantity_precision)
             notional_value = TEST_QUANTITY * current_price
+            log_with_format('debug', "Sau khi điều chỉnh: TEST_QUANTITY={qty}, Notional={notional}", 
+                            variables={'qty': f"{TEST_QUANTITY:.{max(quantity_precision, 1)}f}", 
+                                       'notional': f"{notional_value:.2f}"}, section="MINER")
 
         log_with_format('info', "Thông số test: Giá={price}, Số lượng={qty}, Giá trị={notional}",
-                        variables={'price': f"{current_price:.2f}", 'qty': f"{TEST_QUANTITY:.{quantity_precision}f}", 
+                        variables={'price': f"{current_price:.2f}", 'qty': f"{TEST_QUANTITY:.{max(quantity_precision, 1)}f}", 
                                    'notional': f"{notional_value:.2f}"}, section="MINER")
 
         if notional_value < MIN_NOTIONAL_VALUE:
