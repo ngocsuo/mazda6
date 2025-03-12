@@ -901,15 +901,15 @@ async def place_order_with_tp_sl(side, price, quantity, volatility, predicted_pr
 
         # Tính SL và TP với khoảng cách lớn hơn
         STOP_LOSS_PERCENT_ADJUSTED = 0.05  # Giữ 5%
-        TAKE_PROFIT_PERCENT_ADJUSTED = 0.04  # Tăng lên 4%
+        TAKE_PROFIT_PERCENT_ADJUSTED = 0.05  # Tăng lên 5%
         sl_price = entry_price * (1 - STOP_LOSS_PERCENT_ADJUSTED - volatility) if side == 'buy' else \
                    entry_price * (1 + STOP_LOSS_PERCENT_ADJUSTED + volatility)
         tp_price = entry_price * (1 + TAKE_PROFIT_PERCENT_ADJUSTED + volatility) if side == 'buy' else \
                    entry_price * (1 - TAKE_PROFIT_PERCENT_ADJUSTED - volatility)
 
         # Đảm bảo giá SL/TP hợp lệ so với mark price
-        min_price_diff = entry_price * 0.01  # Giữ 1%
-        adjustment_factor = 0.01  # Điều chỉnh thêm 1% nếu cần
+        min_price_diff = entry_price * 0.015  # Tăng lên 1.5% để tuân thủ quy định
+        adjustment_factor = 0.015  # Điều chỉnh thêm 1.5% nếu cần
         if side == 'buy':
             sl_price = min(sl_price, mark_price - min_price_diff)
             tp_price = max(tp_price, mark_price + min_price_diff)
@@ -917,12 +917,12 @@ async def place_order_with_tp_sl(side, price, quantity, volatility, predicted_pr
             sl_price = max(sl_price, mark_price + min_price_diff)
             tp_price = min(tp_price, mark_price - min_price_diff)
 
-        while abs(sl_price - mark_price) / mark_price < 0.01:  # Đảm bảo SL cách mark price ít nhất 1%
+        while abs(sl_price - mark_price) / mark_price < 0.015:  # Đảm bảo SL cách mark price ít nhất 1.5%
             if side == 'buy':
                 sl_price *= (1 - adjustment_factor)
             else:
                 sl_price *= (1 + adjustment_factor)
-        while abs(tp_price - mark_price) / mark_price < 0.01:  # Đảm bảo TP cách mark price ít nhất 1%
+        while abs(tp_price - mark_price) / mark_price < 0.015:  # Đảm bảo TP cách mark price ít nhất 1.5%
             if side == 'buy':
                 tp_price *= (1 + adjustment_factor)
             else:
@@ -939,7 +939,7 @@ async def place_order_with_tp_sl(side, price, quantity, volatility, predicted_pr
             'quantity': quantity
         }
 
-        # Đặt Stop Loss trên vị thế
+        # Đặt Stop Loss
         sl_success = False
         sl_order_id = None
         for attempt in range(max_retries):
@@ -951,6 +951,7 @@ async def place_order_with_tp_sl(side, price, quantity, volatility, predicted_pr
                     amount=quantity,
                     params={'stopPrice': sl_price, 'reduceOnly': True}
                 )
+                log_with_format('debug', "Kết quả SL order: {order}", variables={'order': str(sl_order)}, section="MINER")
                 if sl_order and 'id' in sl_order:
                     sl_order_id = sl_order['id']
                     sl_status = await exchange.fetch_order(sl_order_id, SYMBOL)
@@ -965,7 +966,7 @@ async def place_order_with_tp_sl(side, price, quantity, volatility, predicted_pr
                         log_with_format('error', "Lệnh SL không được đặt thành công trên sàn, trạng thái: {status}",
                                        variables={'status': sl_status['status']}, section="MINER")
                 else:
-                    log_with_format('error', "Lệnh SL trả về None hoặc không hợp lệ", section="MINER")
+                    log_with_format('warning', "Lệnh SL trả về None hoặc không hợp lệ, thử lại", section="MINER")
             except Exception as e:
                 log_with_format('error', "Lỗi đặt SL (lần {attempt}/{max}): {error}",
                                variables={'attempt': str(attempt+1), 'max': str(max_retries), 'error': str(e)},
@@ -977,7 +978,7 @@ async def place_order_with_tp_sl(side, price, quantity, volatility, predicted_pr
         # Đợi trước khi đặt TP
         await asyncio.sleep(wait_time)
 
-        # Đặt Take Profit trên vị thế
+        # Đặt Take Profit
         tp_success = False
         tp_order_id = None
         for attempt in range(max_retries):
@@ -989,6 +990,7 @@ async def place_order_with_tp_sl(side, price, quantity, volatility, predicted_pr
                     amount=quantity,
                     params={'stopPrice': tp_price, 'reduceOnly': True}
                 )
+                log_with_format('debug', "Kết quả TP order: {order}", variables={'order': str(tp_order)}, section="MINER")
                 if tp_order and 'id' in tp_order:
                     tp_order_id = tp_order['id']
                     tp_status = await exchange.fetch_order(tp_order_id, SYMBOL)
@@ -1003,7 +1005,7 @@ async def place_order_with_tp_sl(side, price, quantity, volatility, predicted_pr
                         log_with_format('error', "Lệnh TP không được đặt thành công trên sàn, trạng thái: {status}",
                                        variables={'status': tp_status['status']}, section="MINER")
                 else:
-                    log_with_format('error', "Lệnh TP trả về None hoặc không hợp lệ", section="MINER")
+                    log_with_format('warning', "Lệnh TP trả về None hoặc không hợp lệ, thử lại", section="MINER")
             except Exception as e:
                 log_with_format('error', "Lỗi đặt TP (lần {attempt}/{max}): {error}",
                                variables={'attempt': str(attempt+1), 'max': str(max_retries), 'error': str(e)},
