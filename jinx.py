@@ -853,7 +853,7 @@ async def confirm_trade_signal(buy_score, sell_score, predicted_change, trend, e
 async def place_order_with_tp_sl(side, price, quantity, volatility, predicted_price, atr):
     global position
     max_retries = 3
-    wait_time = 3  # Tăng thời gian chờ giữa các lệnh lên 3 giây
+    wait_time = 5  # Tăng thời gian chờ lên 5 giây để sàn xử lý ổn định hơn
 
     try:
         # Đặt lệnh MARKET để mở vị thế
@@ -879,7 +879,7 @@ async def place_order_with_tp_sl(side, price, quantity, volatility, predicted_pr
                     raise Exception("Không thể mở vị thế sau 3 lần thử")
                 await asyncio.sleep(wait_time)
 
-        # Đợi một chút để sàn xử lý lệnh mở vị thế
+        # Đợi để sàn xử lý lệnh mở vị thế
         await asyncio.sleep(wait_time)
 
         # Lưu thông tin vị thế tạm thời
@@ -889,23 +889,37 @@ async def place_order_with_tp_sl(side, price, quantity, volatility, predicted_pr
             'quantity': quantity
         }
 
+        # Lấy giá hiện tại để kiểm tra SL/TP
+        current_price = await get_price()
+        if current_price is None:
+            log_with_format('error', "Không thể lấy giá hiện tại để đặt SL/TP", section="NET")
+            raise Exception("Không thể lấy giá hiện tại")
+
         # Tính SL và TP với điều chỉnh volatility
-        sl_price = entry_price * (1 - STOP_LOSS_PERCENT - volatility) if side == 'buy' else \
-                   entry_price * (1 + STOP_LOSS_PERCENT + volatility)
-        tp_price = entry_price * (1 + TAKE_PROFIT_PERCENT + volatility) if side == 'buy' else \
-                   entry_price * (1 - TAKE_PROFIT_PERCENT - volatility)
+        # Tăng STOP_LOSS_PERCENT và TAKE_PROFIT_PERCENT để SL/TP xa hơn
+        STOP_LOSS_PERCENT_ADJUSTED = 0.03  # Tăng từ 0.02 lên 0.03 (3%)
+        TAKE_PROFIT_PERCENT_ADJUSTED = 0.02  # Tăng từ 0.015 lên 0.02 (2%)
+        sl_price = entry_price * (1 - STOP_LOSS_PERCENT_ADJUSTED - volatility) if side == 'buy' else \
+                   entry_price * (1 + STOP_LOSS_PERCENT_ADJUSTED + volatility)
+        tp_price = entry_price * (1 + TAKE_PROFIT_PERCENT_ADJUSTED + volatility) if side == 'buy' else \
+                   entry_price * (1 - TAKE_PROFIT_PERCENT_ADJUSTED - volatility)
 
         # Đảm bảo giá SL/TP hợp lệ (không quá gần giá hiện tại)
-        min_price_diff = entry_price * 0.001  # Đảm bảo SL/TP cách giá hiện tại ít nhất 0.1%
+        min_price_diff = entry_price * 0.005  # Tối thiểu 0.5% để tránh lỗi "immediately trigger"
         if side == 'buy':
-            sl_price = min(sl_price, entry_price - min_price_diff)
-            tp_price = max(tp_price, entry_price + min_price_diff)
+            # SL phải nhỏ hơn giá hiện tại một khoảng an toàn
+            sl_price = min(sl_price, current_price - min_price_diff)
+            # TP phải lớn hơn giá hiện tại
+            tp_price = max(tp_price, current_price + min_price_diff)
         else:
-            sl_price = max(sl_price, entry_price + min_price_diff)
-            tp_price = min(tp_price, entry_price - min_price_diff)
+            # SL phải lớn hơn giá hiện tại một khoảng an toàn
+            sl_price = max(sl_price, current_price + min_price_diff)
+            # TP phải nhỏ hơn giá hiện tại
+            tp_price = min(tp_price, current_price - min_price_diff)
 
-        log_with_format('debug', "Tính toán SL/TP: SL={sl_price}, TP={tp_price}",
-                        variables={'sl_price': f"{sl_price:.2f}", 'tp_price': f"{tp_price:.2f}"}, section="MINER")
+        log_with_format('debug', "Tính toán SL/TP: Giá hiện tại={current}, SL={sl_price}, TP={tp_price}",
+                        variables={'current': f"{current_price:.2f}", 'sl_price': f"{sl_price:.2f}", 'tp_price': f"{tp_price:.2f}"},
+                        section="MINER")
 
         # Đặt Stop Loss trên vị thế
         sl_success = False
@@ -1019,26 +1033,7 @@ async def place_order_with_tp_sl(side, price, quantity, volatility, predicted_pr
                         await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] KHẨN CẤP: Không thể đóng vị thế {side.upper()} do lỗi nghiêm trọng. Vui lòng kiểm tra thủ công!")
                     await asyncio.sleep(wait_time)
         return None
-
-    entry_price = position['entry_price']
-    quantity = position['quantity']
-    side = position['side']
-
-    # Tính PNL của vị thế hiện tại
-    unrealized_pnl = (current_price - entry_price) * quantity \
-                     if side == 'buy' else \
-                     (entry_price - current_price) * quantity
-
-    # Kiểm tra PNL của vị thế
-    if unrealized_pnl < -DAILY_LOSS_LIMIT:
-        log_with_format('warning', "PNL vị thế {side} vượt giới hạn: {pnl}, đóng vị thế", 
-                       variables={'side': side.upper(), 'pnl': f"{unrealized_pnl:.2f}"}, section="MINER")
-        await close_position('sell' if side == 'buy' else 'buy', quantity, current_price, "PNL Threshold Exceeded")
-    else:
-        log_with_format('debug', "PNL vị thế {side}: {pnl}", 
-                       variables={'side': side.upper(), 'pnl': f"{unrealized_pnl:.2f}"}, section="MINER")
-
-
+    
 async def close_position(side, quantity, close_price, close_reason):
     global position, performance
     try:
