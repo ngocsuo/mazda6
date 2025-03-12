@@ -18,7 +18,6 @@ from strategies import TrendFollowing, Scalping, MeanReversion
 from colorama import init, Fore, Style
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestRegressor
-import asyncio
 
 # Khởi tạo colorama
 init()
@@ -231,36 +230,57 @@ async def watch_position_and_price():
 async def test_order_placement():
     global exchange, current_price
     log_with_format('info', "=== BẮT ĐẦU KIỂM TRA LỆNH TEST ===", section="MINER")
-    MIN_NOTIONAL_VALUE = 20.0
-    wait_time = 5
+    MIN_NOTIONAL_VALUE = 20.0  # Giá trị nominal tối thiểu theo quy định Binance
+    wait_time = 3  # Thời gian chờ giữa các lệnh
     max_retries = 3
 
     try:
+        # Lấy giá hiện tại
         current_price = await get_price()
         if current_price is None:
             log_with_format('error', "Không thể lấy giá hiện tại để test", section="NET")
             return False
 
-        test_quantity = max(0.011, MIN_NOTIONAL_VALUE / current_price)
+        # Tính test_quantity dựa trên giá hiện tại để đảm bảo notional ≥ 20 USDT
+        test_quantity = max(0.011, MIN_NOTIONAL_VALUE / current_price)  # Đảm bảo ít nhất 0.011 ETH hoặc đủ 20 USDT
         notional_value = test_quantity * current_price
         log_with_format('info', "Tính toán test_quantity: Giá={price}, Số lượng={qty}, Giá trị nominal={notional}",
                         variables={'price': f"{current_price:.2f}", 'qty': f"{test_quantity:.4f}", 'notional': f"{notional_value:.2f}"},
                         section="MINER")
 
+        # Mở vị thế test với lệnh BUY
         test_order = await place_order_with_tp_sl('buy', current_price, test_quantity, 0.0, current_price, 0.0)
         if test_order is None:
             log_with_format('error', "Lệnh test BUY thất bại, không thể tiếp tục", section="MINER")
             return False
 
+        # Đợi để sàn xử lý
         await asyncio.sleep(wait_time)
 
-        # Kiểm tra vị thế trên sàn
+        # Kiểm tra vị thế test
         positions = await exchange.fetch_positions([SYMBOL])
         current_position = next((p for p in positions if p['symbol'] == SYMBOL), None)
         if not current_position or float(current_position['info']['positionAmt']) == 0:
             log_with_format('error', "Vị thế test không được mở trên sàn", section="MINER")
-            await close_position('sell', test_quantity, current_price, "Test Failed - Position Not Found")
             return False
+
+        # Kiểm tra SL và TP
+        sl_exists = False
+        tp_exists = False
+        if 'sl_order_id' in position and position['sl_order_id']:
+            try:
+                sl_order = await exchange.fetch_order(position['sl_order_id'], SYMBOL)
+                sl_exists = sl_order['status'] == 'open'
+                log_with_format('info', "Kiểm tra SL: {status}", variables={'status': sl_order['status']}, section="MINER")
+            except Exception as e:
+                log_with_format('error', "Lỗi kiểm tra SL trong test: {error}", variables={'error': str(e)}, section="MINER")
+        if 'tp_order_id' in position and position['tp_order_id']:
+            try:
+                tp_order = await exchange.fetch_order(position['tp_order_id'], SYMBOL)
+                tp_exists = tp_order['status'] == 'open'
+                log_with_format('info', "Kiểm tra TP: {status}", variables={'status': tp_order['status']}, section="MINER")
+            except Exception as e:
+                log_with_format('error', "Lỗi kiểm tra TP trong test: {error}", variables={'error': str(e)}, section="MINER")
 
         # Đóng vị thế test
         if position:
@@ -269,7 +289,6 @@ async def test_order_placement():
                 try:
                     await close_position(close_side, test_quantity, current_price, "Test Completed")
                     log_with_format('info', "Đã đóng vị thế test thành công", section="MINER")
-                    position = None
                     break
                 except Exception as e:
                     log_with_format('error', "Lỗi đóng vị thế test (lần {attempt}/{max}): {error}",
@@ -277,18 +296,24 @@ async def test_order_placement():
                                    section="MINER")
                     if attempt == max_retries - 1:
                         log_with_format('error', "Không thể đóng vị thế test sau {max} lần thử", variables={'max': str(max_retries)}, section="MINER")
+                    await asyncio.sleep(wait_time)
 
-        log_with_format('info', "Kiểm tra lệnh test THÀNH CÔNG: SL và TP được đặt thành công", section="MINER")
-        await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Kiểm tra lệnh test thành công: SL và TP được đặt!")
-        return True
+        # Kết luận
+        if sl_exists and tp_exists:
+            log_with_format('info', "Kiểm tra lệnh test THÀNH CÔNG: SL và TP được đặt thành công", section="MINER")
+            await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Kiểm tra lệnh test thành công: SL và TP được đặt!")
+            return True
+        else:
+            log_with_format('error', "Kiểm tra lệnh test THẤT BẠI: SL={sl_status}, TP={tp_status}", 
+                           variables={'sl_status': str(sl_exists), 'tp_status': str(tp_exists)}, section="MINER")
+            await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Kiểm tra lệnh test thất bại: SL={sl_exists}, TP={tp_exists}. Vui lòng kiểm tra thủ công!")
+            return False
 
     except Exception as e:
         log_with_format('error', "Lỗi nghiêm trọng trong kiểm tra lệnh test: {error}", variables={'error': str(e)}, section="MINER")
-        if position:
-            await close_position('sell', test_quantity, current_price, "Test Failed")
-            position = None
         await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Lỗi kiểm tra lệnh test: {str(e)}. Vui lòng kiểm tra thủ công!")
         return False
+    
 
 async def check_and_close_position(current_price):
     global position
@@ -824,41 +849,14 @@ async def confirm_trade_signal(buy_score, sell_score, predicted_change, trend, e
     log_with_format('debug', "Xác nhận tín hiệu: Score={score}, Signals={signals}",
                     variables={'score': f"{confirmation_score:.2f}", 'signals': str(signals)}, section="MINER")
     return confirmation_score >= 0.5
-#
+
 async def place_order_with_tp_sl(side, price, quantity, volatility, predicted_price, atr):
     global position
     max_retries = 3
-    wait_time = 5  # Giảm thời gian chờ vì không cần kiểm tra SL/TP riêng
+    wait_time = 5  # Thời gian chờ giữa các lần thử
 
     try:
-        # Lấy mark price trước khi đặt lệnh
-        ticker = await exchange.fetch_ticker(SYMBOL)
-        mark_price = float(ticker['info']['markPrice']) if 'markPrice' in ticker['info'] else float(ticker['last'])
-        log_with_format('debug', "Giá mark hiện tại: {mark_price}", variables={'mark_price': f"{mark_price:.2f}"}, section="NET")
-
-        # Tính SL và TP dựa trên giá vào
-        STOP_LOSS_PERCENT_ADJUSTED = 0.05  # 5%
-        TAKE_PROFIT_PERCENT_ADJUSTED = 0.06  # 6%
-        entry_price = price
-        sl_price = entry_price * (1 - STOP_LOSS_PERCENT_ADJUSTED - volatility) if side == 'buy' else \
-                   entry_price * (1 + STOP_LOSS_PERCENT_ADJUSTED + volatility)
-        tp_price = entry_price * (1 + TAKE_PROFIT_PERCENT_ADJUSTED + volatility) if side == 'buy' else \
-                   entry_price * (1 - TAKE_PROFIT_PERCENT_ADJUSTED - volatility)
-
-        # Đảm bảo giá SL/TP hợp lệ so với mark price
-        min_price_diff = entry_price * 0.015  # 1.5%
-        if side == 'buy':
-            sl_price = min(sl_price, mark_price - min_price_diff)
-            tp_price = max(tp_price, mark_price + min_price_diff)
-        else:
-            sl_price = max(sl_price, mark_price + min_price_diff)
-            tp_price = min(tp_price, mark_price - min_price_diff)
-
-        log_with_format('debug', "Tính toán SL/TP: Giá mark={mark}, SL={sl_price}, TP={tp_price}",
-                        variables={'mark': f"{mark_price:.2f}", 'sl_price': f"{sl_price:.2f}", 'tp_price': f"{tp_price:.2f}"},
-                        section="MINER")
-
-        # Đặt lệnh MARKET với SL và TP trực tiếp trên vị thế
+        # Đặt lệnh MARKET để mở vị thế
         order = None
         for attempt in range(max_retries):
             try:
@@ -867,27 +865,61 @@ async def place_order_with_tp_sl(side, price, quantity, volatility, predicted_pr
                     type='MARKET',
                     side=side,
                     amount=quantity,
-                    params={
-                        'stopLossPrice': sl_price,  # Đặt SL trực tiếp trên vị thế
-                        'takeProfitPrice': tp_price,  # Đặt TP trực tiếp trên vị thế
-                        'reduceOnly': False
-                    }
+                    params={'positionSide': 'BOTH'}  # Đảm bảo tương thích với hedge mode
                 )
                 entry_price = float(order['price']) if order.get('price') else price
-                log_with_format('info', "Đã mở vị thế {side} với SL/TP: Giá={price}, Số lượng={qty}, SL={sl}, TP={tp}",
-                               variables={'side': side.upper(), 'price': f"{entry_price:.2f}", 'qty': f"{quantity:.4f}",
-                                          'sl': f"{sl_price:.2f}", 'tp': f"{tp_price:.2f}"},
+                log_with_format('info', "Đã mở vị thế {side}: Giá={price}, Số lượng={qty}",
+                               variables={'side': side.upper(), 'price': f"{entry_price:.2f}", 'qty': f"{quantity:.2f}"},
                                section="MINER")
                 break
             except Exception as e:
-                log_with_format('error', "Lỗi đặt lệnh {side} với SL/TP (lần {attempt}/{max}): {error}",
+                log_with_format('error', "Lỗi đặt lệnh {side} (lần {attempt}/{max}): {error}",
                                variables={'side': side, 'attempt': str(attempt+1), 'max': str(max_retries), 'error': str(e)},
                                section="MINER")
                 if attempt == max_retries - 1:
-                    raise Exception("Không thể mở vị thế với SL/TP sau 3 lần thử")
+                    raise Exception("Không thể mở vị thế sau 3 lần thử")
                 await asyncio.sleep(wait_time)
 
-        # Lưu thông tin vị thế
+        # Đợi để sàn xử lý lệnh mở vị thế
+        await asyncio.sleep(wait_time)
+
+        # Lấy giá hiện tại để tính TP/SL chính xác
+        current_price = await get_price()
+        if current_price is None:
+            log_with_format('error', "Không thể lấy giá hiện tại để đặt SL/TP", section="NET")
+            raise Exception("Không thể lấy giá hiện tại")
+
+        # Sửa logic tính SL và TP
+        STOP_LOSS_PERCENT_ADJUSTED = STOP_LOSS_PERCENT + volatility
+        TAKE_PROFIT_PERCENT_ADJUSTED = TAKE_PROFIT_PERCENT + volatility
+
+        if side == 'buy':
+            sl_price = entry_price * (1 - STOP_LOSS_PERCENT_ADJUSTED)  # SL dưới giá vào lệnh
+            tp_price = entry_price * (1 + TAKE_PROFIT_PERCENT_ADJUSTED)  # TP trên giá vào lệnh
+        else:  # side == 'sell'
+            sl_price = entry_price * (1 + STOP_LOSS_PERCENT_ADJUSTED)  # SL trên giá vào lệnh
+            tp_price = entry_price * (1 - TAKE_PROFIT_PERCENT_ADJUSTED)  # TP dưới giá vào lệnh
+
+        # Điều chỉnh giá để tránh "immediately triggered"
+        min_price_diff = entry_price * 0.005  # Khoảng cách tối thiểu 0.5% so với giá hiện tại
+        if side == 'buy':
+            sl_price = min(sl_price, current_price - min_price_diff)  # SL không được vượt quá giá hiện tại
+            tp_price = max(tp_price, current_price + min_price_diff)  # TP không được dưới giá hiện tại
+        else:
+            sl_price = max(sl_price, current_price + min_price_diff)  # SL không được dưới giá hiện tại
+            tp_price = min(tp_price, current_price - min_price_diff)  # TP không được vượt quá giá hiện tại
+
+        # Làm tròn giá theo tick size của Binance
+        symbol_info = await exchange.fetch_trading_fees(SYMBOL)
+        tick_size = 0.01  # Giả định tick size, cần lấy từ API thực tế
+        sl_price = round(sl_price / tick_size) * tick_size
+        tp_price = round(tp_price / tick_size) * tick_size
+
+        log_with_format('debug', "Tính toán SL/TP: Giá vào lệnh={entry}, Giá hiện tại={current}, SL={sl}, TP={tp}",
+                        variables={'entry': f"{entry_price:.2f}", 'current': f"{current_price:.2f}", 
+                                   'sl': f"{sl_price:.2f}", 'tp': f"{tp_price:.2f}"}, section="MINER")
+
+        # Lưu thông tin vị thế tạm thời
         position = {
             'side': side,
             'entry_price': entry_price,
@@ -896,72 +928,303 @@ async def place_order_with_tp_sl(side, price, quantity, volatility, predicted_pr
             'tp_price': tp_price
         }
 
-        # Đợi và kiểm tra vị thế
-        await asyncio.sleep(wait_time)
-        positions = await exchange.fetch_positions([SYMBOL])
-        current_position = next((p for p in positions if p['symbol'] == SYMBOL), None)
-        if not current_position or float(current_position['info']['positionAmt']) == 0:
-            log_with_format('warning', "Vị thế không tồn tại trên sàn sau khi mở, đóng ngay lập tức", section="MINER")
-            await close_position('sell' if side == 'buy' else 'buy', quantity, entry_price, "Position Not Found")
+        # Đặt Stop Loss
+        sl_order_id = None
+        for attempt in range(max_retries):
+            try:
+                sl_order = await exchange.create_order(
+                    symbol=SYMBOL,
+                    type='STOP_MARKET',
+                    side='sell' if side == 'buy' else 'buy',
+                    amount=quantity,
+                    params={
+                        'stopPrice': sl_price,
+                        'reduceOnly': True,
+                        'positionSide': 'BOTH'
+                    }
+                )
+                sl_order_id = sl_order['id']
+                # Kiểm tra trạng thái lệnh SL
+                sl_status = await exchange.fetch_order(sl_order_id, SYMBOL)
+                if sl_status['status'] == 'open':
+                    position['sl_order_id'] = sl_order_id
+                    log_with_format('info', "Đã đặt SL cho vị thế {side}: SL={sl}",
+                                   variables={'side': side.upper(), 'sl': f"{sl_price:.2f}"}, section="MINER")
+                    break
+                else:
+                    log_with_format('warning', "Lệnh SL không mở được: {status}", 
+                                   variables={'status': sl_status['status']}, section="MINER")
+            except Exception as e:
+                log_with_format('error', "Lỗi đặt SL (lần {attempt}/{max}): {error}",
+                               variables={'attempt': str(attempt+1), 'max': str(max_retries), 'error': str(e)},
+                               section="MINER")
+                if attempt == max_retries - 1:
+                    raise Exception("Không thể đặt SL sau 3 lần thử")
+                await asyncio.sleep(wait_time)
+
+        # Đặt Take Profit
+        tp_order_id = None
+        for attempt in range(max_retries):
+            try:
+                tp_order = await exchange.create_order(
+                    symbol=SYMBOL,
+                    type='TAKE_PROFIT_MARKET',
+                    side='sell' if side == 'buy' else 'buy',
+                    amount=quantity,
+                    params={
+                        'stopPrice': tp_price,
+                        'reduceOnly': True,
+                        'positionSide': 'BOTH'
+                    }
+                )
+                tp_order_id = tp_order['id']
+                # Kiểm tra trạng thái lệnh TP
+                tp_status = await exchange.fetch_order(tp_order_id, SYMBOL)
+                if tp_status['status'] == 'open':
+                    position['tp_order_id'] = tp_order_id
+                    log_with_format('info', "Đã đặt TP cho vị thế {side}: TP={tp}",
+                                   variables={'side': side.upper(), 'tp': f"{tp_price:.2f}"}, section="MINER")
+                    break
+                else:
+                    log_with_format('warning', "Lệnh TP không mở được: {status}", 
+                                   variables={'status': tp_status['status']}, section="MINER")
+            except Exception as e:
+                log_with_format('error', "Lỗi đặt TP (lần {attempt}/{max}): {error}",
+                               variables={'attempt': str(attempt+1), 'max': str(max_retries), 'error': str(e)},
+                               section="MINER")
+                if attempt == max_retries - 1:
+                    raise Exception("Không thể đặt TP sau 3 lần thử")
+                await asyncio.sleep(wait_time)
+
+        # Xác nhận TP/SL đã được đặt thành công
+        if not (sl_order_id and tp_order_id):
+            log_with_format('error', "Không đặt được TP/SL, đóng vị thế ngay", section="MINER")
+            close_side = 'sell' if side == 'buy' else 'buy'
+            await close_position(close_side, quantity, entry_price, "TP/SL Failed")
             return None
 
         # Thông báo Telegram
         await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Mở vị thế {side.upper()}: Giá={entry_price:.2f}, "
-                                                    f"SL={sl_price:.2f}, TP={tp_price:.2f}, Số lượng={quantity:.4f}")
+                                                    f"SL={sl_price:.2f}, TP={tp_price:.2f}, Số lượng={quantity:.2f}")
         return order
 
     except Exception as e:
-        log_with_format('error', "Lỗi nghiêm trọng khi đặt lệnh/TP/SL: {error}", variables={'error': str(e)}, section="MINER")
-        if position:
-            await close_position('sell' if side == 'buy' else 'buy', quantity, entry_price, "Order Failed")
+        log_with_format('error', "Lỗi nghiêm trọng khi đặt lệnh/TP/SL: {error}", 
+                        variables={'error': str(e)}, section="MINER")
+        if position:  # Đóng vị thế nếu đã mở nhưng TP/SL thất bại
+            close_side = 'sell' if side == 'buy' else 'buy'
+            for attempt in range(max_retries):
+                try:
+                    await close_position(close_side, quantity, entry_price, "Order Failed")
+                    break
+                except Exception as close_error:
+                    log_with_format('error', "Lỗi đóng vị thế (lần {attempt}/{max}): {error}",
+                                   variables={'attempt': str(attempt+1), 'max': str(max_retries), 'error': str(close_error)},
+                                   section="MINER")
+                    if attempt == max_retries - 1:
+                        await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] KHẨN CẤP: Không thể đóng vị thế {side.upper()} do lỗi: {str(close_error)}. Kiểm tra thủ công!")
+                    await asyncio.sleep(wait_time)
         return None
+        
+async def close_position(side, quantity, close_price, close_reason):
+    global position, performance
+    try:
+        order = await exchange.create_order(symbol=SYMBOL, type='market', side=side, amount=quantity, params={'positionSide': 'BOTH'})
+        gross_profit = (close_price - position['entry_price']) * quantity * LEVERAGE / position['entry_price'] if position['side'].lower() == 'buy' else (position['entry_price'] - close_price) * quantity * LEVERAGE / position['entry_price']
+        fee = abs(gross_profit) * TRADING_FEE_PERCENT
+        net_profit = gross_profit - fee
+        
+        performance['profit'] += net_profit
+        if net_profit > 0:
+            performance['total_profit'] += net_profit
+            performance['consecutive_losses'] = 0
+        else:
+            performance['total_loss'] += abs(net_profit)
+            performance['consecutive_losses'] += 1
+        log_with_format('info', "Đóng vị thế: Lý do={reason}, Profit={profit}",
+                        variables={'reason': close_reason}, profit=net_profit, section="MINER")
+        
+        # Gửi thông báo Telegram khi đóng vị thế
+        await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Đóng vị thế {position['side'].upper()}: Giá={close_price:.2f}, Lý do={close_reason}, Lợi nhuận={net_profit:.2f}")
+        
+        await save_prediction(time.time(), position['side'], position['tp_price'], position['entry_price'], quantity, close_price, net_profit)
+        position = None
+    except Exception as e:
+        log_with_format('error', "Lỗi đóng vị thế: {error}", variables={'error': str(e)}, section="MINER")
+        await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Lỗi đóng vị thế: {str(e)}")
+   
 #
-async def close_position(side, quantity, price, reason):
-    global position
+#
+async def test_order_placement():
+    global exchange, current_price, position
+    log_with_format('info', "=== BẮT ĐẦU KIỂM TRA ĐẶT VỊ THẾ VÀ TP/SL ===", section="MINER")
+    MIN_NOTIONAL_VALUE = 20.0  # Giá trị tối thiểu theo quy định Binance Futures
+    TEST_QUANTITY = 0.01  # Số lượng nhỏ để test (0.01 ETH)
+    wait_time = 5  # Thời gian chờ giữa các bước
     max_retries = 3
-    wait_time = 5
+    monitoring_time = 120  # Thời gian theo dõi tối đa (2 phút)
 
     try:
-        for attempt in range(max_retries):
-            try:
-                # Đặt lệnh đóng vị thế
-                close_order = await exchange.create_order(
-                    symbol=SYMBOL,
-                    type='MARKET',
-                    side=side,
-                    amount=quantity,
-                    params={'reduceOnly': True}
-                )
-                log_with_format('info', "Đã gửi lệnh đóng vị thế {side}: Số lượng={qty}, Lý do={reason}",
-                               variables={'side': side.upper(), 'qty': f"{quantity:.4f}", 'reason': reason},
-                               section="MINER")
+        # Lấy giá hiện tại
+        current_price = await get_price()
+        if current_price is None:
+            log_with_format('error', "Không thể lấy giá hiện tại để test", section="NET")
+            await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Test thất bại: Không lấy được giá hiện tại")
+            return False
 
-                # Đợi và kiểm tra
-                await asyncio.sleep(wait_time)
-                positions = await exchange.fetch_positions([SYMBOL])
-                current_position = next((p for p in positions if p['symbol'] == SYMBOL), None)
-                if not current_position or float(current_position['info']['positionAmt']) == 0:
-                    log_with_format('info', "Đã đóng vị thế {side} thành công", 
-                                   variables={'side': side.upper()}, section="MINER")
-                    await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Vị thế {side} đã đóng")
-                    position = None
-                    return True
-                else:
-                    log_with_format('error', "Vị thế vẫn mở trên sàn sau khi đóng, cần kiểm tra thủ công", section="MINER")
-                    await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] KHẨN CẤP: Vị thế {side.upper()} vẫn mở sau khi đóng. Vui lòng kiểm tra thủ công!")
+        # Tính số lượng test dựa trên giá trị tối thiểu
+        notional_value = TEST_QUANTITY * current_price
+        if notional_value < MIN_NOTIONAL_VALUE:
+            TEST_QUANTITY = MIN_NOTIONAL_VALUE / current_price
+        log_with_format('info', "Thông số test: Giá={price}, Số lượng={qty}, Giá trị={notional}",
+                        variables={'price': f"{current_price:.2f}", 'qty': f"{TEST_QUANTITY:.4f}", 
+                                   'notional': f"{TEST_QUANTITY * current_price:.2f}"}, section="MINER")
+
+        # Mở vị thế test với lệnh BUY
+        log_with_format('info', "Đặt vị thế BUY để test", section="MINER")
+        test_order = await place_order_with_tp_sl(
+            side='buy',
+            price=current_price,
+            quantity=TEST_QUANTITY,
+            volatility=0.0,  # Không điều chỉnh volatility trong test
+            predicted_price=current_price * 1.02,  # Giả lập TP tăng 2%
+            atr=0  # Giả lập ATR bằng 0
+        )
+
+        if test_order is None or not position:
+            log_with_format('error', "Không thể mở vị thế test BUY", section="MINER")
+            await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Test thất bại: Không mở được vị thế BUY")
+            return False
+
+        # Đợi để sàn xử lý
+        await asyncio.sleep(wait_time)
+
+        # Kiểm tra trạng thái vị thế và TP/SL
+        positions = await exchange.fetch_positions([SYMBOL])
+        current_position = next((p for p in positions if p['symbol'] == SYMBOL), None)
+        if not current_position or float(current_position['info']['positionAmt']) == 0:
+            log_with_format('error', "Vị thế test không tồn tại trên sàn", section="MINER")
+            await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Test thất bại: Vị thế không tồn tại")
+            return False
+
+        # Kiểm tra TP/SL trên sàn
+        sl_exists = False
+        tp_exists = False
+        if 'sl_order_id' in position and position['sl_order_id']:
+            try:
+                sl_order = await exchange.fetch_order(position['sl_order_id'], SYMBOL)
+                sl_exists = sl_order['status'] == 'open'
+                log_with_format('info', "Trạng thái SL: {status}, Giá SL: {sl_price}",
+                                variables={'status': sl_order['status'], 'sl_price': f"{position['sl_price']:.2f}"}, 
+                                section="MINER")
             except Exception as e:
-                log_with_format('error', "Lỗi đóng vị thế (lần {attempt}/{max}): {error}",
-                               variables={'attempt': str(attempt+1), 'max': str(max_retries), 'error': str(e)},
-                               section="MINER")
-                if attempt == max_retries - 1:
-                    raise Exception("Không thể đóng vị thế sau 3 lần thử")
-                await asyncio.sleep(wait_time)
-        return False
+                log_with_format('error', "Lỗi kiểm tra SL: {error}", variables={'error': str(e)}, section="MINER")
+
+        if 'tp_order_id' in position and position['tp_order_id']:
+            try:
+                tp_order = await exchange.fetch_order(position['tp_order_id'], SYMBOL)
+                tp_exists = tp_order['status'] == 'open'
+                log_with_format('info', "Trạng thái TP: {status}, Giá TP: {tp_price}",
+                                variables={'status': tp_order['status'], 'tp_price': f"{position['tp_price']:.2f}"}, 
+                                section="MINER")
+            except Exception as e:
+                log_with_format('error', "Lỗi kiểm tra TP: {error}", variables={'error': str(e)}, section="MINER")
+
+        if not (sl_exists and tp_exists):
+            log_with_format('error', "TP/SL không được đặt thành công: SL={sl_status}, TP={tp_status}",
+                            variables={'sl_status': str(sl_exists), 'tp_status': str(tp_exists)}, section="MINER")
+            await close_position('sell', TEST_QUANTITY, current_price, "Test Failed: TP/SL Missing")
+            await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Test thất bại: SL={sl_exists}, TP={tp_exists}")
+            return False
+
+        # Theo dõi giá để kiểm tra TP/SL có kích hoạt không
+        log_with_format('info', "Bắt đầu theo dõi giá để kiểm tra TP/SL trong {time}s",
+                        variables={'time': str(monitoring_time)}, section="MINER")
+        start_time = time.time()
+        tp_triggered = False
+        sl_triggered = False
+
+        while time.time() - start_time < monitoring_time:
+            current_price = await get_price()
+            if current_price is None:
+                continue
+
+            log_with_format('debug', "Giá hiện tại: {price} | SL={sl} | TP={tp}",
+                            variables={'price': f"{current_price:.2f}", 'sl': f"{position['sl_price']:.2f}", 
+                                       'tp': f"{position['tp_price']:.2f}"}, section="MINER")
+
+            # Kiểm tra trạng thái vị thế
+            positions = await exchange.fetch_positions([SYMBOL])
+            current_position = next((p for p in positions if p['symbol'] == SYMBOL), None)
+
+            if not current_position or float(current_position['info']['positionAmt']) == 0:
+                # Vị thế đã đóng, kiểm tra xem do TP hay SL
+                if 'tp_order_id' in position:
+                    tp_order = await exchange.fetch_order(position['tp_order_id'], SYMBOL)
+                    if tp_order['status'] in ['closed', 'filled']:
+                        tp_triggered = True
+                        log_with_format('info', "TP đã kích hoạt tại giá {price}", 
+                                        variables={'price': f"{current_price:.2f}"}, section="MINER")
+                        break
+                if 'sl_order_id' in position:
+                    sl_order = await exchange.fetch_order(position['sl_order_id'], SYMBOL)
+                    if sl_order['status'] in ['closed', 'filled']:
+                        sl_triggered = True
+                        log_with_format('info', "SL đã kích hoạt tại giá {price}", 
+                                        variables={'price': f"{current_price:.2f}"}, section="MINER")
+                        break
+                break
+
+            await asyncio.sleep(5)  # Kiểm tra mỗi 5 giây
+
+        # Đánh giá kết quả
+        if tp_triggered:
+            log_with_format('info', "Kiểm tra thành công: TP đã kích hoạt đúng", section="MINER")
+            await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Test thành công: TP kích hoạt tại {current_price:.2f}")
+            position = None  # Reset position vì đã đóng
+            return True
+        elif sl_triggered:
+            log_with_format('info', "Kiểm tra thành công: SL đã kích hoạt đúng", section="MINER")
+            await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Test thành công: SL kích hoạt tại {current_price:.2f}")
+            position = None  # Reset position vì đã đóng
+            return True
+        else:
+            log_with_format('warning', "TP/SL không kích hoạt trong thời gian theo dõi, đóng vị thế thủ công", section="MINER")
+            for attempt in range(max_retries):
+                try:
+                    await close_position('sell', TEST_QUANTITY, current_price, "Test Completed: Manual Close")
+                    log_with_format('info', "Đã đóng vị thế test thủ công", section="MINER")
+                    break
+                except Exception as e:
+                    log_with_format('error', "Lỗi đóng vị thế test (lần {attempt}/{max}): {error}",
+                                    variables={'attempt': str(attempt+1), 'max': str(max_retries), 'error': str(e)},
+                                    section="MINER")
+                    if attempt == max_retries - 1:
+                        await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Test thất bại: Không đóng được vị thế test")
+                        return False
+                    await asyncio.sleep(wait_time)
+
+            # Kết luận: TP/SL được đặt nhưng không kích hoạt trong thời gian test
+            log_with_format('info', "Kiểm tra hoàn tất: TP/SL được đặt thành công nhưng không kích hoạt trong {time}s",
+                            variables={'time': str(monitoring_time)}, section="MINER")
+            await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Test hoàn tất: TP/SL được đặt nhưng không kích hoạt trong {monitoring_time}s")
+            return True
 
     except Exception as e:
-        log_with_format('error', "Lỗi nghiêm trọng khi đóng vị thế: {error}", variables={'error': str(e)}, section="MINER")
-        await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] KHẨN CẤP: Không thể đóng vị thế {side.upper()}. Vui lòng kiểm tra thủ công!")
+        log_with_format('error', "Lỗi nghiêm trọng trong kiểm tra: {error}", variables={'error': str(e)}, section="MINER")
+        if position:  # Đóng vị thế nếu có lỗi
+            for attempt in range(max_retries):
+                try:
+                    await close_position('sell', TEST_QUANTITY, current_price, "Test Failed: Exception")
+                    break
+                except Exception as close_error:
+                    log_with_format('error', "Lỗi đóng vị thế khi test thất bại: {error}", 
+                                    variables={'error': str(close_error)}, section="MINER")
+                    if attempt == max_retries - 1:
+                        await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] KHẨN CẤP: Test thất bại và không đóng được vị thế: {str(e)}")
+        await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Test thất bại: {str(e)}")
         return False
+#
 #
 async def check_position_status(current_price):
     global position
@@ -1280,15 +1543,13 @@ def load_historical_performance():
         performance.update({'profit': 0.0, 'win_rate': 0.5, 'consecutive_losses': 0, 'total_profit': 0, 'total_loss': 0})
         strategy_performance.update({strat.name: {'wins': 0, 'losses': 0} for strat in STRATEGIES})
         daily_trades = 0
-#
+
 async def place_order_with_tp_sl(side, price, quantity, volatility, predicted_price, atr):
     global position
     max_retries = 3
-    wait_time = 15  # Tăng lên 15 giây để đảm bảo vị thế được phản ánh
 
     try:
-        # Đặt lệnh MARKET để mở vị thế
-        order = None
+        # Đặt lệnh thị trường
         for attempt in range(max_retries):
             try:
                 order = await exchange.create_order(
@@ -1298,83 +1559,24 @@ async def place_order_with_tp_sl(side, price, quantity, volatility, predicted_pr
                     amount=quantity
                 )
                 entry_price = float(order['price']) if order.get('price') else price
-                log_with_format('info', "Đã mở vị thế {side}: Giá={price}, Số lượng={qty}",
-                               variables={'side': side.upper(), 'price': f"{entry_price:.2f}", 'qty': f"{quantity:.4f}"},
-                               section="MINER")
+                log_with_format('info', "Đã mở vị thế {side}: Giá={price}, Số lượng={qty}", 
+                               variables={'side': side.upper(), 'price': f"{entry_price:.2f}", 'qty': f"{quantity:.2f}"}, section="MINER")
                 break
             except Exception as e:
-                log_with_format('error', "Lỗi đặt lệnh {side} (lần {attempt}/{max}): {error}",
-                               variables={'side': side, 'attempt': str(attempt+1), 'max': str(max_retries), 'error': str(e)},
-                               section="MINER")
+                log_with_format('error', "Lỗi đặt lệnh {side} (lần {attempt}/{max}): {error}", 
+                               variables={'side': side, 'attempt': str(attempt+1), 'max': str(max_retries), 'error': str(e)}, section="MINER")
                 if attempt == max_retries - 1:
                     raise Exception("Không thể mở vị thế sau 3 lần thử")
-                await asyncio.sleep(wait_time)
+                await asyncio.sleep(2)
 
-        # Chờ và kiểm tra vị thế được mở trên sàn
-        for i in range(3):  # Thử kiểm tra 3 lần với độ trễ
-            await asyncio.sleep(wait_time // 3)  # Chia nhỏ thời gian chờ
-            positions = await exchange.fetch_positions([SYMBOL])
-            current_position = next((p for p in positions if p['symbol'] == SYMBOL), None)
-            if current_position and float(current_position['info']['positionAmt']) != 0:
-                log_with_format('info', "Vị thế {side} được xác nhận trên sàn: Số lượng={amount}",
-                               variables={'side': side.upper(), 'amount': f"{float(current_position['info']['positionAmt']):.4f}"},
-                               section="MINER")
-                break
-            else:
-                log_with_format('warning', "Vị thế chưa được phản ánh trên sàn, thử lại (lần {attempt}/3)",
-                               variables={'attempt': str(i+1)}, section="MINER")
-        else:
-            log_with_format('warning', "Vị thế không tồn tại trên sàn sau khi mở, hủy đặt SL/TP", section="MINER")
-            await close_position('sell' if side == 'buy' else 'buy', quantity, entry_price, "Position Not Found")
-            return None
+        # Tính TP và SL
+        sl_price = entry_price * (1 + STOP_LOSS_PERCENT + volatility) if side == 'buy' else \
+                   entry_price * (1 - STOP_LOSS_PERCENT - volatility)
+        tp_price = entry_price * (1 - TAKE_PROFIT_PERCENT - volatility) if side == 'buy' else \
+                   entry_price * (1 + TAKE_PROFIT_PERCENT + volatility)
 
-        # Lấy mark price
-        ticker = await exchange.fetch_ticker(SYMBOL)
-        mark_price = float(ticker['info']['markPrice']) if 'markPrice' in ticker['info'] else float(ticker['last'])
-        log_with_format('debug', "Giá mark hiện tại: {mark_price}", variables={'mark_price': f"{mark_price:.2f}"}, section="NET")
-
-        # Tính SL và TP
-        STOP_LOSS_PERCENT_ADJUSTED = 0.05
-        TAKE_PROFIT_PERCENT_ADJUSTED = 0.06
-        sl_price = entry_price * (1 - STOP_LOSS_PERCENT_ADJUSTED - volatility) if side == 'buy' else \
-                   entry_price * (1 + STOP_LOSS_PERCENT_ADJUSTED + volatility)
-        tp_price = entry_price * (1 + TAKE_PROFIT_PERCENT_ADJUSTED + volatility) if side == 'buy' else \
-                   entry_price * (1 - TAKE_PROFIT_PERCENT_ADJUSTED - volatility)
-
-        min_price_diff = entry_price * 0.015
-        adjustment_factor = 0.015
-        if side == 'buy':
-            sl_price = min(sl_price, mark_price - min_price_diff)
-            tp_price = max(tp_price, mark_price + min_price_diff)
-        else:
-            sl_price = max(sl_price, mark_price + min_price_diff)
-            tp_price = min(tp_price, mark_price - min_price_diff)
-
-        while abs(sl_price - mark_price) / mark_price < 0.015:
-            if side == 'buy':
-                sl_price *= (1 - adjustment_factor)
-            else:
-                sl_price *= (1 + adjustment_factor)
-        while abs(tp_price - mark_price) / mark_price < 0.015:
-            if side == 'buy':
-                tp_price *= (1 + adjustment_factor)
-            else:
-                tp_price *= (1 - adjustment_factor)
-
-        log_with_format('debug', "Tính toán SL/TP: Giá mark={mark}, SL={sl_price}, TP={tp_price}",
-                        variables={'mark': f"{mark_price:.2f}", 'sl_price': f"{sl_price:.2f}", 'tp_price': f"{tp_price:.2f}"},
-                        section="MINER")
-
-        # Lưu thông tin vị thế
-        position = {
-            'side': side,
-            'entry_price': entry_price,
-            'quantity': quantity
-        }
-
-        # Đặt Stop Loss
+        # Đặt SL trên Binance
         sl_success = False
-        sl_order_id = None
         for attempt in range(max_retries):
             try:
                 sl_order = await exchange.create_order(
@@ -1384,38 +1586,17 @@ async def place_order_with_tp_sl(side, price, quantity, volatility, predicted_pr
                     amount=quantity,
                     params={'stopPrice': sl_price, 'reduceOnly': True}
                 )
-                log_with_format('debug', "Kết quả SL order: {order}", variables={'order': str(sl_order)}, section="MINER")
-                if sl_order and 'id' in sl_order:
-                    sl_order_id = sl_order['id']
-                    sl_status = await exchange.fetch_order(sl_order_id, SYMBOL)
-                    if sl_status['status'] == 'open':
-                        position['sl_order_id'] = sl_order_id
-                        position['sl_price'] = sl_price
-                        sl_success = True
-                        log_with_format('info', "Đã đặt SL cho vị thế {side}: SL={sl}",
-                                       variables={'side': side.upper(), 'sl': f"{sl_price:.2f}"}, section="MINER")
-                        break
-                    else:
-                        log_with_format('error', "Lệnh SL không được đặt thành công trên sàn, trạng thái: {status}",
-                                       variables={'status': sl_status['status']}, section="MINER")
-                        break
-                else:
-                    log_with_format('warning', "Lệnh SL trả về None hoặc không hợp lệ", section="MINER")
-                    break
+                sl_success = True
+                break
             except Exception as e:
-                log_with_format('error', "Lỗi đặt SL (lần {attempt}/{max}): {error}",
-                               variables={'attempt': str(attempt+1), 'max': str(max_retries), 'error': str(e)},
-                               section="MINER")
+                log_with_format('error', "Lỗi đặt SL (lần {attempt}/{max}): {error}", 
+                               variables={'attempt': str(attempt+1), 'max': str(max_retries), 'error': str(e)}, section="MINER")
                 if attempt == max_retries - 1:
                     raise Exception("Không thể đặt SL sau 3 lần thử")
-                await asyncio.sleep(wait_time)
+                await asyncio.sleep(2)
 
-        # Đợi trước khi đặt TP
-        await asyncio.sleep(wait_time)
-
-        # Đặt Take Profit
+        # Đặt TP trên Binance
         tp_success = False
-        tp_order_id = None
         for attempt in range(max_retries):
             try:
                 tp_order = await exchange.create_order(
@@ -1425,49 +1606,43 @@ async def place_order_with_tp_sl(side, price, quantity, volatility, predicted_pr
                     amount=quantity,
                     params={'stopPrice': tp_price, 'reduceOnly': True}
                 )
-                log_with_format('debug', "Kết quả TP order: {order}", variables={'order': str(tp_order)}, section="MINER")
-                if tp_order and 'id' in tp_order:
-                    tp_order_id = tp_order['id']
-                    tp_status = await exchange.fetch_order(tp_order_id, SYMBOL)
-                    if tp_status['status'] == 'open':
-                        position['tp_order_id'] = tp_order_id
-                        position['tp_price'] = tp_price
-                        tp_success = True
-                        log_with_format('info', "Đã đặt TP cho vị thế {side}: TP={tp}",
-                                       variables={'side': side.upper(), 'tp': f"{tp_price:.2f}"}, section="MINER")
-                        break
-                    else:
-                        log_with_format('error', "Lệnh TP không được đặt thành công trên sàn, trạng thái: {status}",
-                                       variables={'status': tp_status['status']}, section="MINER")
-                        break
-                else:
-                    log_with_format('warning', "Lệnh TP trả về None hoặc không hợp lệ", section="MINER")
-                    break
+                tp_success = True
+                break
             except Exception as e:
-                log_with_format('error', "Lỗi đặt TP (lần {attempt}/{max}): {error}",
-                               variables={'attempt': str(attempt+1), 'max': str(max_retries), 'error': str(e)},
-                               section="MINER")
+                log_with_format('error', "Lỗi đặt TP (lần {attempt}/{max}): {error}", 
+                               variables={'attempt': str(attempt+1), 'max': str(max_retries), 'error': str(e)}, section="MINER")
                 if attempt == max_retries - 1:
                     raise Exception("Không thể đặt TP sau 3 lần thử")
-                await asyncio.sleep(wait_time)
+                await asyncio.sleep(2)
 
-        # Nếu TP/SL thất bại, đóng vị thế ngay lập tức
+        # Kiểm tra chắc chắn TP/SL được đặt
         if not (sl_success and tp_success):
-            log_with_format('error', "Không đặt được TP/SL trên sàn, đóng vị thế ngay lập tức", section="MINER")
+            log_with_format('error', "Không đặt được TP/SL trên Binance, đóng vị thế ngay", section="MINER")
             await close_position('sell' if side == 'buy' else 'buy', quantity, entry_price, "TP/SL Failed")
             return None
 
-        # Thông báo Telegram
+        # Lưu thông tin vị thế
+        position = {
+            'side': side,
+            'entry_price': entry_price,
+            'quantity': quantity,
+            'sl_price': sl_price,
+            'tp_price': tp_price,
+            'sl_order_id': sl_order['id'],
+            'tp_order_id': tp_order['id']
+        }
+        log_with_format('info', "Đã đặt TP/SL trên Binance: SL={sl}, TP={tp}", 
+                       variables={'sl': f"{sl_price:.2f}", 'tp': f"{tp_price:.2f}"}, section="MINER")
         await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Mở vị thế {side.upper()}: Giá={entry_price:.2f}, "
-                                                    f"SL={sl_price:.2f}, TP={tp_price:.2f}, Số lượng={quantity:.4f}")
+                                                    f"SL={sl_price:.2f}, TP={tp_price:.2f}, Số lượng={quantity:.2f}")
         return order
 
     except Exception as e:
-        log_with_format('error', "Lỗi nghiêm trọng khi đặt lệnh/TP/SL: {error}", variables={'error': str(e)}, section="MINER")
-        if position:
+        log_with_format('error', "Lỗi nghiêm trọng khi đặt lệnh: {error}", variables={'error': str(e)}, section="MINER")
+        if position:  # Đóng vị thế nếu đã mở nhưng TP/SL thất bại
             await close_position('sell' if side == 'buy' else 'buy', quantity, entry_price, "Order Failed")
         return None
-#
+
 async def watch_price():
     global current_price
     while True:
@@ -1532,7 +1707,6 @@ async def optimized_trading_bot():
     if historical_data is None:
         log_with_format('error', "Không thể lấy dữ liệu lịch sử, thoát", section="NET")
         await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Không thể lấy dữ liệu lịch sử, bot thoát")
-        await shutdown_bot("Không thể lấy dữ liệu lịch sử")
         return
     closes, volumes, atr, (historical_closes, historical_volumes, historical_highs, historical_lows, ohlcv) = historical_data
     log_with_format('debug', "Kích thước dữ liệu ban đầu: closes={c_shape}, volumes={v_shape}",
@@ -1548,18 +1722,46 @@ async def optimized_trading_bot():
 
     try:
         await exchange.set_leverage(LEVERAGE, SYMBOL)
-        log_with_format('info', "Đã đặt đòn bẩy {leverage}x cho {symbol}",
+        log_with_format('info', "Đã đặt đòn bẩy {leverage}x cho {symbol}", 
                         variables={'leverage': str(LEVERAGE), 'symbol': SYMBOL}, section="NET")
     except Exception as e:
         log_with_format('error', "Lỗi đặt đòn bẩy: {error}", variables={'error': str(e)}, section="NET")
-        await shutdown_bot("Lỗi đặt đòn bẩy", str(e))
+        await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Lỗi đặt đòn bẩy: {str(e)}")
         return
 
     asyncio.create_task(watch_position_and_price())
 
-    # Bắt đầu giao dịch tự động
-    log_with_format('info', "Bot giao dịch tự động bắt đầu chạy...", section="MAIN")
-    await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Bot giao dịch tự động bắt đầu chạy...")
+    # Thực hiện kiểm tra lệnh test
+    log_with_format('info', "Bắt đầu kiểm tra lệnh test với số lượng nhỏ (0.01 ETH)", section="MINER")
+    test_success = await test_order_placement()
+    if not test_success:
+        log_with_format('warning', "Kiểm tra lệnh test thất bại. Vui lòng kiểm tra thủ công và sửa lỗi trước khi tiếp tục!", section="MINER")
+        await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Kiểm tra lệnh test thất bại. Vui lòng kiểm tra thủ công!")
+        return
+
+    log_with_format('info', "Kiểm tra lệnh test thành công. Bạn có muốn tiếp tục chạy bot không? Gõ 'yes' trong Telegram để xác nhận.", section="MINER")
+    await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Kiểm tra lệnh test thành công. Gõ 'yes' để chạy bot, hoặc bot sẽ dừng sau 60 giây.")
+
+    # Chờ xác nhận từ Telegram
+    confirmation = None
+    start_time = time.time()
+    while time.time() - start_time < 60:  # Chờ tối đa 60 giây
+        updates = await bot.get_updates(offset=-1)
+        for update in updates:
+            if update.message and update.message.text.lower() == 'yes' and update.message.chat.id == int(CHAT_ID):
+                confirmation = True
+                break
+        if confirmation:
+            break
+        await asyncio.sleep(1)
+
+    if confirmation:
+        log_with_format('info', "Xác nhận thành công. Bắt đầu chạy bot...", section="CPU")
+        await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Bot bắt đầu chạy...")
+    else:
+        log_with_format('warning', "Không có xác nhận sau 60 giây. Bot dừng lại.", section="CPU")
+        await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Bot dừng vì không có xác nhận.")
+        return
 
     # Tiếp tục vòng lặp chính
     while True:
@@ -1735,53 +1937,40 @@ async def shutdown_bot(reason, error=None):
         log_with_format('info' if not error else 'error', f"Bot dừng: {reason}" + (f" - Lỗi: {error}" if error else ""), 
                         variables={'error': str(error)} if error else None, section="NET")
         await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Bot dừng: {reason}" + (f" - Lỗi: {error}" if error else ""))
-        await exchange.close()  # Đóng kết nối với Binance
     except Exception as telegram_error:
         print(f"Lỗi gửi thông báo Telegram khi dừng bot: {telegram_error}")
 
-async def main():
-    global exchange, bot, CHAT_ID, SYMBOL, LEVERAGE
-
-    # Load environment variables
-    API_KEY = os.getenv('BINANCE_API_KEY')
-    API_SECRET = os.getenv('BINANCE_API_SECRET')
-    TELEGRAM_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-    TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
-
-    # Initialize exchange (sửa để dùng alias 'ccxt' thay vì 'ccxt.async_support')
-    exchange = ccxt.Binance({  # Thay 'ccxt.async_support.Binance' bằng 'ccxt.Binance'
-        'apiKey': API_KEY,
-        'secret': API_SECRET,
-        'enableRateLimit': True,
-        'options': {'defaultType': 'future'},
-    })
-    bot = telegram.Bot(TELEGRAM_TOKEN)
-    CHAT_ID = TELEGRAM_CHAT_ID
-    SYMBOL = 'ETH/USDT'
-    LEVERAGE = 20
-
-    # Menu
-    print("=== Trading Bot Menu ===")
-    print("1. Test Setup (Kiểm tra thiết lập)")
-    print("2. Auto Trade (Giao dịch tự động)")
-    choice = input("Nhập lựa chọn của bạn (1 hoặc 2): ").strip()
-
-    if choice == "1":
-        log_with_format('info', "Bắt đầu kiểm tra thiết lập", section="MAIN")
-        test_success = await test_order_placement()
-        if test_success:
-            log_with_format('info', "Kiểm tra thiết lập thành công!", section="MAIN")
-            await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Kiểm tra thiết lập thành công!")
+def get_user_choice():
+    print("\n=== CHỌN CHẾ ĐỘ CHẠY BOT ===")
+    print("1: Test đặt vị thế (kiểm tra TP/SL)")
+    print("2: Chạy giao dịch tự động (Auto Trade)")
+    print("Nhấn phím bất kỳ khác để thoát")
+    
+    while True:
+        choice = input("Nhập lựa chọn (1 hoặc 2): ").strip()
+        if choice in ['1', '2']:
+            return choice
         else:
-            log_with_format('error', "Kiểm tra thiết lập thất bại!", section="MAIN")
-            await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] Kiểm tra thiết lập thất bại!")
-        await shutdown_bot("Kết thúc kiểm tra thiết lập")
-    elif choice == "2":
-        log_with_format('info', "Bắt đầu chế độ giao dịch tự động", section="MAIN")
+            print("Lựa chọn không hợp lệ. Thoát chương trình.")
+            return None
+
+async def run_bot():
+    choice = get_user_choice()
+    if choice is None:
+        log_with_format('info', "Người dùng đã thoát chương trình", section="CPU")
+        return
+    
+    if choice == '1':
+        log_with_format('info', "Chạy chế độ test đặt vị thế", section="MINER")
+        await test_order_placement()
+    elif choice == '2':
+        log_with_format('info', "Chạy chế độ giao dịch tự động", section="CPU")
         await optimized_trading_bot()
-    else:
-        print("Lựa chọn không hợp lệ. Vui lòng chọn 1 hoặc 2.")
-        await shutdown_bot("Lựa chọn không hợp lệ")
-        
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(run_bot())
+    except KeyboardInterrupt:
+        asyncio.run(shutdown_bot("Người dùng dừng bot"))
+    except Exception as e:
+        asyncio.run(shutdown_bot("Lỗi bot", e))
