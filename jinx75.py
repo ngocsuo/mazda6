@@ -410,8 +410,9 @@ async def test_order_placement():
                                     variables={'error': str(close_error)}, section="MINER")
                     if attempt == max_retries - 1:
                         await bot.send_message(chat_id=CHAT_ID, text=f"[{SYMBOL}] KHẨN CẤP: Test thất bại và không đóng được vị thế: {str(e)}")
-        await bot.send_message(chat_id=CHAT_ID stanowtext=f"[{SYMBOL}] Test thất bại: {str(e)}")
+
         return False
+        
 async def check_and_close_position(current_price):
     global position
     if not position:
